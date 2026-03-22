@@ -1,0 +1,3 @@
+// Repositories handle data access logic.
+// They use the database driver (firestoreService or direct db) to fetch/save data.
+module.exports = {};

@@ -1,0 +1,3 @@
+// Controllers receive HTTP requests, parse inputs, call Services, and send responses.
+// Example: roomsController.js, authController.js
+module.exports = {};
