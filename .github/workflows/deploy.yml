@@ -48,12 +48,27 @@ jobs:
           sudo dpkg -i cloudflared.deb
 
       # Configuramos SSH para que use cloudflared como ProxyCommand
-      - name: Configurar SSH con Cloudflare Access
+      # IMPORTANTE: Eliminamos ssh-keyscan porque el túnel de Cloudflare no permite escaneo convencional
+      - name: Configurar Túnel SSH con Cloudflare Access
         run: |
           mkdir -p ~/.ssh
-          echo "Host ${{ secrets.SERVER_HOST }}" > ~/.ssh/config
-          echo "  ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h --id ${{ secrets.CF_CLIENT_ID }} --secret ${{ secrets.CF_CLIENT_SECRET }}" >> ~/.ssh/config
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          # Creamos la configuración para que SSH 'sepa' que debe usar cloudflared
+          cat <<EOF > ~/.ssh/config
+          Host ${{ secrets.SERVER_HOST }}
+            HostName ${{ secrets.SERVER_HOST }}
+            User roberto
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ProxyCommand /usr/bin/cloudflared access ssh --hostname %h --id ${{ secrets.CF_CLIENT_ID }} --secret ${{ secrets.CF_CLIENT_SECRET }}
+          EOF
+          chmod 600 ~/.ssh/config
+
+      # Paso de Verificación (Ping de conexión) propuesto por el usuario
+      - name: Verificar Conexión al Túnel (Health Check)
+        run: |
+          echo "Verificando si el servidor responde a través de Cloudflare..."
+          # Intentamos ejecutar un comando simple de ecos para probar la conexión
+          ssh -o ConnectTimeout=10 ${{ secrets.SERVER_HOST }} "echo '✅ Conexión establecida con éxito hacia el Asustor'"
 
       # Usamos una acción de SSH para ejecutar los comandos en el servidor
       - name: Desplegar en el Servidor (Asustor)
