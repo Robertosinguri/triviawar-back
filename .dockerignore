@@ -22,4 +22,4 @@ docs
 
 # Secretos (IMPORTANTE: Se inyectarán en el servidor, no en la imagen)
 .env
-*.json
+service-account.json

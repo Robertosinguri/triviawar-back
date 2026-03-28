@@ -6,10 +6,10 @@ WORKDIR /app
 
 # Copia los archivos de definición de dependencias
 # (Se hace como root por defecto para evitar problemas de permisos iniciales)
-COPY package*.json ./
+COPY package.json package-lock.json ./
 
-# Instala las dependencias del proyecto (incluyendo las que requieren compilación)
-RUN npm ci --only=production
+# Instala las dependencias del proyecto (omitimos las de desarrollo para producción)
+RUN npm ci --omit=dev
 
 # Copia el resto del código de la aplicación
 COPY . .
