@@ -64,11 +64,18 @@ jobs:
           chmod 600 ~/.ssh/config
 
       # Paso de Verificación (Ping de conexión) propuesto por el usuario
+      # Usamos la acción appleboy/ssh-action porque sí soporta el envío de contraseña (SSH_PASSWORD)
       - name: Verificar Conexión al Túnel (Health Check)
-        run: |
-          echo "Verificando si el servidor responde a través de Cloudflare..."
-          # Intentamos ejecutar un comando simple de ecos para probar la conexión
-          ssh -o ConnectTimeout=10 ${{ secrets.SERVER_HOST }} "echo '✅ Conexión establecida con éxito hacia el Asustor'"
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: roberto
+          password: ${{ secrets.SSH_PASSWORD }}
+          command_timeout: 30s
+          script: |
+            echo "✅ ¡Conexión establecida con éxito hacia el Asustor por Cloudflare!"
+            uname -a
+            uptime
 
       # Usamos una acción de SSH para ejecutar los comandos en el servidor
       - name: Desplegar en el Servidor (Asustor)
@@ -86,7 +93,7 @@ jobs:
             echo "${{ secrets.ENV_FILE_CONTENT }}" > .env
             echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service-account.json
             
-            # 3. Loguearse en GHCR dentro del servidor (opcional si es público, recomendado si es privado)
+            # 3. Loguearse en GHCR dentro del servidor
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
             # 4. Actualizar la imagen y reiniciar los contenedores con Docker Compose
