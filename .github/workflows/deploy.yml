@@ -59,7 +59,7 @@ jobs:
             User roberto
             StrictHostKeyChecking no
             UserKnownHostsFile /dev/null
-            ProxyCommand /usr/bin/cloudflared access ssh --loglevel debug --hostname %h --id ${{ secrets.CF_CLIENT_ID }} --secret ${{ secrets.CF_CLIENT_SECRET }}
+            ProxyCommand /usr/bin/cloudflared access ssh --hostname %h --id ${{ secrets.CF_CLIENT_ID }} --secret ${{ secrets.CF_CLIENT_SECRET }}
           EOF
           chmod 600 ~/.ssh/config
 
@@ -72,13 +72,21 @@ jobs:
       - name: Verificar Conexión al Túnel (Health Check)
         run: |
           echo "✅ Intentando conexión SSH segura a través del túnel de Cloudflare..."
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -v -o ConnectTimeout=20 ${{ secrets.SERVER_HOST }} "echo '✅ ¡Conexión establecida con éxito hacia el Asustor por Cloudflare!'; uname -a; uptime"
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o ConnectTimeout=20 ${{ secrets.SERVER_HOST }} "echo '✅ ¡Conexión establecida con éxito hacia el Asustor por Cloudflare!'; uname -a; uptime"
+
+      - name: Transferir archivos al Servidor (Asustor)
+        run: |
+          echo "📦 Copiando docker-compose.yml al servidor..."
+          # Primero nos aseguramos de que la carpeta exista en el NAS
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh ${{ secrets.SERVER_HOST }} "mkdir -p /mnt/asustor_data/25-DOCKER/triviawar-back"
+          # Luego copiamos el archivo usando SCP (que automáticamente usa nuestro túnel)
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" scp docker-compose.yml ${{ secrets.SERVER_HOST }}:/mnt/asustor_data/25-DOCKER/triviawar-back/docker-compose.yml
 
       # Despliegue final usando el mismo método nativo y robusto
       - name: Desplegar en el Servidor (Asustor)
         run: |
           echo "🚀 Iniciando despliegue en el servidor remoto..."
-          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -v ${{ secrets.SERVER_HOST }} "bash -s" << 'EOF'
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh ${{ secrets.SERVER_HOST }} "bash -s" << 'EOF'
             set -e
             # 1. Entrar a la carpeta del proyecto
             cd /mnt/asustor_data/25-DOCKER/triviawar-back
