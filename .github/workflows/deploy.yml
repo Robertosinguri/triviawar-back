@@ -63,29 +63,23 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
-      # Paso de Verificación (Ping de conexión) propuesto por el usuario
-      # Usamos la acción appleboy/ssh-action porque sí soporta el envío de contraseña (SSH_PASSWORD)
-      - name: Verificar Conexión al Túnel (Health Check)
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: roberto
-          password: ${{ secrets.SSH_PASSWORD }}
-          command_timeout: 30s
-          script: |
-            echo "✅ ¡Conexión establecida con éxito hacia el Asustor por Cloudflare!"
-            uname -a
-            uptime
+      # Instalamos sshpass para pasar la contraseña al comando ssh nativo del runner
+      - name: Instalar sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
 
-      # Usamos una acción de SSH para ejecutar los comandos en el servidor
+      # Paso de Verificación (Ping de conexión) propuesto por el usuario
+      # Usamos sshpass con el comando ssh nativo que SÍ lee el archivo ~/.ssh/config creado anteriormente
+      - name: Verificar Conexión al Túnel (Health Check)
+        run: |
+          echo "✅ Intentando conexión SSH segura a través del túnel de Cloudflare..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh -o ConnectTimeout=20 ${{ secrets.SERVER_HOST }} "echo '✅ ¡Conexión establecida con éxito hacia el Asustor por Cloudflare!'; uname -a; uptime"
+
+      # Despliegue final usando el mismo método nativo y robusto
       - name: Desplegar en el Servidor (Asustor)
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: roberto
-          password: ${{ secrets.SSH_PASSWORD }}
-          # Ejecutamos la secuencia de comandos comentada
-          script: |
+        run: |
+          echo "🚀 Iniciando despliegue en el servidor remoto..."
+          sshpass -p "${{ secrets.SSH_PASSWORD }}" ssh ${{ secrets.SERVER_HOST }} "bash -s" << 'EOF'
+            set -e
             # 1. Entrar a la carpeta del proyecto
             cd /mnt/asustor_data/25-DOCKER/triviawar-back
             
@@ -102,3 +96,5 @@ jobs:
             
             # 5. Limpiar imágenes viejas para ahorrar espacio
             docker image prune -f
+            echo "✅ Despliegue completado con éxito."
+          EOF
