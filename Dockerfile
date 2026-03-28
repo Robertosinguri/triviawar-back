@@ -1,30 +1,30 @@
-# Usa una imagen oficial de Node.js ligera como base
-FROM node:20-slim
+# Usa la imagen oficial COMPLETA de Node.js (incluye herramientas de compilación)
+FROM node:20
 
 # Establece el directorio de trabajo en el contenedor
 WORKDIR /app
 
-# Aseguramos que el directorio pertenezca al usuario 'node'
-RUN chown node:node /app
-
-# Cambiamos al usuario 'node' para mayor seguridad
-USER node
-
 # Copia los archivos de definición de dependencias
-COPY --chown=node:node package*.json ./
+# (Se hace como root por defecto para evitar problemas de permisos iniciales)
+COPY package*.json ./
 
-# Instala las dependencias del proyecto
+# Instala las dependencias del proyecto (incluyendo las que requieren compilación)
 RUN npm ci --only=production
 
 # Copia el resto del código de la aplicación
-# NOTA: Los secretos (.env, JSON) se inyectarán en el servidor en tiempo de ejecución
-COPY --chown=node:node . .
+COPY . .
 
-# Expone el puerto que usa la aplicación
+# Ajustamos los permisos de la carpeta /app para el usuario 'node'
+RUN chown -R node:node /app
+
+# Exponemos el puerto
 EXPOSE 3000
 
-# Variable de entorno por defecto
+# Variable de entorno de producción
 ENV NODE_ENV=production
+
+# Cambiamos al usuario 'node' para ejecutar la aplicación (Seguridad Mejorada)
+USER node
 
 # Comando para iniciar la aplicación
 CMD ["node", "server.js"]
