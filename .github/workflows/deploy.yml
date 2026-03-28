@@ -1,0 +1,78 @@
+name: CI/CD Pipeline - TriviaWar Backend
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  # 1. TRABAJO DE CONSTRUCCIÓN Y EMPUJE A GHCR
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Log in a GitHub Container Registry (GHCR)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Preparar nombre de la imagen en minúsculas
+        run: |
+          echo "IMAGE_NAME=ghcr.io/$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Build y Push de la imagen Docker
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:latest .
+          docker push ${{ env.IMAGE_NAME }}:latest
+
+  # 2. TRABAJO DE DESPLIEGUE POR SSH (vía Cloudflare Tunnel)
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout del código (para obtener el docker-compose.yml)
+        uses: actions/checkout@v4
+
+      # Paso crítico: Instalar cloudflared para poder atravesar el túnel
+      - name: Instalar Cloudflared
+        run: |
+          curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+
+      # Configuramos SSH para que use cloudflared como ProxyCommand
+      - name: Configurar SSH con Cloudflare Access
+        run: |
+          mkdir -p ~/.ssh
+          echo "Host ${{ secrets.SERVER_HOST }}" > ~/.ssh/config
+          echo "  ProxyCommand /usr/local/bin/cloudflared access ssh --hostname %h --id ${{ secrets.CF_CLIENT_ID }} --secret ${{ secrets.CF_CLIENT_SECRET }}" >> ~/.ssh/config
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      # Usamos una acción de SSH para ejecutar los comandos en el servidor
+      - name: Desplegar en el Servidor (Asustor)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: roberto
+          password: ${{ secrets.SSH_PASSWORD }}
+          # Ejecutamos la secuencia de comandos comentada
+          script: |
+            # 1. Entrar a la carpeta del proyecto
+            cd /mnt/asustor_data/25-DOCKER/triviawar-back
+            
+            # 2. Crear/Actualizar archivos de secretos desde GitHub
+            echo "${{ secrets.ENV_FILE_CONTENT }}" > .env
+            echo '${{ secrets.SERVICE_ACCOUNT_JSON }}' > service-account.json
+            
+            # 3. Loguearse en GHCR dentro del servidor (opcional si es público, recomendado si es privado)
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # 4. Actualizar la imagen y reiniciar los contenedores con Docker Compose
+            docker compose pull
+            docker compose up -d
+            
+            # 5. Limpiar imágenes viejas para ahorrar espacio
+            docker image prune -f

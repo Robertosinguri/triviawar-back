@@ -1,8 +1,25 @@
+# Archivos de dependencias locales
 node_modules
 npm-debug.log
+
+# Archivos de Docker
 Dockerfile
 .dockerignore
+docker-compose.yml
+
+# Git y herramientas de desarrollo
 .git
 .gitignore
+.github
 .vscode
+.idea
+.DS_Store
+
+# Pruebas y documentación local
 tests
+README.md
+docs
+
+# Secretos (IMPORTANTE: Se inyectarán en el servidor, no en la imagen)
+.env
+*.json
