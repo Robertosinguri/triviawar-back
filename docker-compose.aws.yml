@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  api:
+    image: ghcr.io/robertosinguri/triviawar-back:latest
+    container_name: triviawar-back-aws
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./.env:/app/.env
+      - ./service-account.json:/app/service-account.json
+    environment:
+      - NODE_ENV=production
+      - PORT=3000

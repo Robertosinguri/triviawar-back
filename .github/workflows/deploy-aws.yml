@@ -1,0 +1,97 @@
+name: CI/CD AWS - TriviaWar Backend
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  # 1. Construir y subir imagen a GHCR (reutilizamos la lógica principal)
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Log in a GitHub Container Registry (GHCR)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Preparar nombre de la imagen en minúsculas
+        run: |
+          echo "IMAGE_NAME=ghcr.io/$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Build y Push de la imagen Docker
+        run: |
+          docker build -t ${{ env.IMAGE_NAME }}:latest .
+          docker push ${{ env.IMAGE_NAME }}:latest
+
+  # 2. Despliegue en AWS EC2 mediante Túnel de Cloudflare y PEM
+  deploy-aws:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # Instalar cloudflared para atravesar el túnel
+      - name: Instalar Cloudflared
+        run: |
+          curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared.deb
+
+      # Configurar la llave PEM y SSH
+      - name: Configurar llave SSH y ProxyCommand
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AWS_SSH_KEY }}" > ~/.ssh/triviawar-key.pem
+          chmod 600 ~/.ssh/triviawar-key.pem
+          
+          # Configuración del túnel basada en tu comando verificado
+          cat <<EOF > ~/.ssh/config
+          Host ${{ secrets.AWS_SSH_HOSTNAME }}
+            HostName ${{ secrets.AWS_SSH_HOSTNAME }}
+            User admin
+            StrictHostKeyChecking no
+            IdentityFile ~/.ssh/triviawar-key.pem
+            ProxyCommand /usr/bin/cloudflared access ssh --hostname %h --service-token-id ${{ secrets.CF_AWS_TOKEN_ID }} --service-token-secret ${{ secrets.CF_AWS_TOKEN_SECRET }}
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Sincronizar archivos a AWS
+        run: |
+          echo "📦 Enviando docker-compose.aws.yml a la instancia EC2..."
+          # Aseguramos que la carpeta de destino exista
+          ssh ${{ secrets.AWS_SSH_HOSTNAME }} "mkdir -p /home/admin/25-docker/02-triviawar-aws"
+          # Copiamos el archivo compose específico de AWS
+          scp docker-compose.aws.yml ${{ secrets.AWS_SSH_HOSTNAME }}:/home/admin/25-docker/02-triviawar-aws/docker-compose.yml
+
+      - name: Ejecutar despliegue remoto en AWS
+        run: |
+          echo "🚀 Reiniciando contenedores en AWS..."
+          ssh ${{ secrets.AWS_SSH_HOSTNAME }} "bash -s" << 'EOF'
+            set -e
+            cd /home/admin/25-docker/02-triviawar-aws
+            
+            # Crear archivos de entorno dinámicos
+            echo "${{ secrets.AWS_ENV_FILE }}" > .env
+            echo '${{ secrets.AWS_SERVICE_ACCOUNT }}' > service-account.json
+            
+            # Login en GHCR para poder bajar la imagen
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Re-desplegar
+            docker compose pull
+            docker compose up -d
+            
+            # Limpieza básica
+            docker image prune -f
+            echo "✅ ¡Backend desplegado con éxito en AWS!"
+          EOF
