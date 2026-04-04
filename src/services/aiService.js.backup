@@ -138,8 +138,7 @@ const generateWithOpenRouter = async (tematicas, dificultad) => {
     }
 
     const result = await response.json();
-    const message = result.choices?.[0]?.message || {};
-    const text = message.content || message.reasoning || '';
+    const text = result.choices?.[0]?.message?.content || "";
     if (!text)
       throw new Error(result.error?.message || "Respuesta vacía de OpenRouter");
 
@@ -167,25 +166,10 @@ const generateWithGroq = async (tematicas, dificultad) => {
     console.warn("⚠️ [PLAN A] Groq omitido: Falta GROQ_API_KEY en .env");
     return null;
   }
+  console.log("🚀 [PLAN A] Intentando generación con Groq...");
 
-  // LÓGICA INTELIGENTE POR DIFICULTAD
-  let activeModel;
-  let modelDescription;
-  
-  if (dificultad === "baby") {
-    activeModel = GROQ_MODEL_SMALL; // llama-3.1-8b-instant
-    modelDescription = "8B (Baby - Máxima eficiencia)";
-  } else if (dificultad === "conocedor" || dificultad === "killer") {
-    activeModel = GROQ_MODEL_LARGE; // llama-3.3-70b-versatile
-    modelDescription = "70B (Killer/Conocedor - Máxima calidad)";
-  } else {
-    activeModel = GROQ_MODEL_LARGE; // Por defecto calidad
-    modelDescription = "70B (Por defecto - Calidad)";
-  }
-
-  console.log(`🚀 [PLAN A] Intentando generación con Groq (${modelDescription})...`);
-  console.log(`   📊 Dificultad: ${dificultad} → Modelo: ${activeModel}`);
-
+  const activeModel =
+    dificultad === "baby" ? GROQ_MODEL_SMALL : GROQ_MODEL_LARGE;
   const startTime = Date.now();
   const prompt = buildPrompt(tematicas, dificultad);
 
@@ -202,7 +186,7 @@ const generateWithGroq = async (tematicas, dificultad) => {
           { role: "system", content: SYSTEM_INSTRUCTION },
           { role: "user", content: prompt },
         ],
-        temperature: 0.7,
+        temperature: 0.7, // Subido para recuperar variedad en Killer
       }),
     });
 
@@ -217,7 +201,7 @@ const generateWithGroq = async (tematicas, dificultad) => {
         JSON.parse(cleanJsonResponse(text)),
         tematicas,
       ),
-      aiUsada: `Groq (${activeModel}) - Estrategia: ${modelDescription}`,
+      aiUsada: `Groq (${activeModel})`,
       duration: Date.now() - startTime,
     };
   } catch (error) {
@@ -391,56 +375,23 @@ const generateQuestions = async (tematicas, dificultad) => {
   const startTime = Date.now();
   const prompt = buildPrompt(tematicas, dificultad);
 
-  console.log(`\n🎯 SOLICITUD DE GENERACIÓN DE PREGUNTAS`);
-  console.log(`   📋 Temáticas: ${tematicas.join(', ')}`);
-  console.log(`   🎯 Dificultad: ${dificultad}`);
-  console.log(`   🔄 Orden de prioridad (nueva estrategia):`);
-  console.log(`      1. PLAN A: Groq (modelo inteligente por dificultad)`);
-  console.log(`      2. PLAN B: Cohere (35B - equilibrio calidad/eficiencia)`);
-  console.log(`      3. PLAN C: Hugging Face (8B - gratuito sólido)`);
-  console.log(`      4. PLAN D: OpenRouter (1.2B - último recurso)`);
-
-  // 1. Groq (Plan A) - Primera opción con lógica inteligente por dificultad
-  console.log(`\n🔧 [PLAN A] Ejecutando estrategia inteligente...`);
+  // 1. Groq (Plan A) - Primera opción
   const groqRes = await generateWithGroq(tematicas, dificultad);
-  if (groqRes) {
-    console.log(`✅ [PLAN A] Éxito con Groq (${groqRes.aiUsada})`);
-    return groqRes;
-  }
-  console.log(`❌ [PLAN A] Falló, procediendo al Plan B...`);
+  if (groqRes) return groqRes;
 
-  // 2. Cohere (Plan B) - Segunda opción (equilibrio calidad/eficiencia)
-  console.log(`\n🔧 [PLAN B] Intentando Cohere (35B)...`);
+  // 2. Cohere (Plan B) - Segunda opción
   const cohereRes = await generateWithCohere(tematicas, dificultad);
-  if (cohereRes) {
-    console.log(`✅ [PLAN B] Éxito con Cohere`);
-    return cohereRes;
-  }
-  console.log(`❌ [PLAN B] Falló, procediendo al Plan C...`);
+  if (cohereRes) return cohereRes;
 
-  // 3. HF (Plan C) - Tercera opción (gratuito sólido)
-  console.log(`\n🔧 [PLAN C] Intentando Hugging Face (8B)...`);
+  // 3. HF (Plan C) - Tercera opción
   const hfRes = await generateWithHF(tematicas, dificultad);
-  if (hfRes) {
-    console.log(`✅ [PLAN C] Éxito con Hugging Face`);
-    return hfRes;
-  }
-  console.log(`❌ [PLAN C] Falló, procediendo al Plan D...`);
+  if (hfRes) return hfRes;
 
-  // 4. OpenRouter (Plan D) - Última opción (último recurso)
-  console.log(`\n🔧 [PLAN D] Intentando OpenRouter (1.2B free)...`);
+  // 4. OpenRouter (Plan D) - Última opción
   const openRouterRes = await generateWithOpenRouter(tematicas, dificultad);
-  if (openRouterRes) {
-    console.log(`✅ [PLAN D] Éxito con OpenRouter`);
-    return openRouterRes;
-  }
-  console.log(`❌ [PLAN D] Falló, todos los planes agotados`);
+  if (openRouterRes) return openRouterRes;
 
-  return { 
-    success: false, 
-    message: "Todos los motores de IA fallaron.",
-    duration: Date.now() - startTime
-  };
+  return { success: false, message: "Todos los motores de IA fallaron." };
 };
 
 module.exports = {

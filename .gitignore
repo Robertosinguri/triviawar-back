@@ -20,3 +20,4 @@ cloudflared.deb
 Thumbs.db
 .DS_Store
 INSTRUCCIONES_GITHUB_SECRETS.txt
+.aider*
