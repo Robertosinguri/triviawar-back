@@ -181,6 +181,7 @@ const guardarResultado = async (userId, resultado) => {
 
 const obtenerRankingGlobal = async (limite = 50) => {
     try {
+        let rankingList = [];
         try {
             // ⚡ INTENTO OPTIMIZADO
             const snapshot = await db.collection(COLLECTION_STATS)
@@ -188,7 +189,7 @@ const obtenerRankingGlobal = async (limite = 50) => {
                 .limit(limite)
                 .get();
 
-            return snapshot.docs.map((doc, index) => {
+            rankingList = snapshot.docs.map((doc, index) => {
                 const data = doc.data();
                 return {
                     ...data,
@@ -202,7 +203,7 @@ const obtenerRankingGlobal = async (limite = 50) => {
             if (dbError.message.includes('Could not load') || dbError.message.includes('Project Id')) {
                 console.warn('⚠️ [RANKING] Fallback a memoria por falta de credenciales');
                 const allStats = await firestoreService.obtenerTodos(COLLECTION_STATS);
-                return allStats
+                rankingList = allStats
                     .sort((a, b) => b.puntajeTotal - a.puntajeTotal)
                     .slice(0, limite)
                     .map((u, index) => ({
@@ -211,9 +212,35 @@ const obtenerRankingGlobal = async (limite = 50) => {
                         promedio: u.partidasJugadas ? parseFloat((u.puntajeTotal / u.partidasJugadas).toFixed(2)) : 0,
                         posicion: index + 1
                     }));
+            } else {
+                throw dbError;
             }
-            throw dbError;
         }
+
+        // Recuperar los correos (emails) desde Firebase Auth
+        try {
+            const uids = rankingList
+                .filter(r => r.userId && r.userId.length > 5)
+                .map(r => ({ uid: r.userId }));
+                
+            if (uids.length > 0) {
+                const result = await admin.auth().getUsers(uids);
+                const emailMap = {};
+                result.users.forEach(u => emailMap[u.uid] = u.email);
+                
+                rankingList = rankingList.map(r => ({
+                    ...r,
+                    email: emailMap[r.userId] || 'Email no disponible'
+                }));
+            } else {
+                rankingList = rankingList.map(r => ({ ...r, email: 'Email no disponible' }));
+            }
+        } catch (err) {
+            console.warn('⚠️ [RANKING] No se pudieron obtener los correos de Auth:', err.message);
+            rankingList = rankingList.map(r => ({ ...r, email: r.userId })); // Fallback
+        }
+
+        return rankingList;
 
     } catch (error) {
         console.error('❌ Error obteniendo ranking:', error);

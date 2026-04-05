@@ -47,8 +47,40 @@ const updateProfile = async (req, res) => {
     }
 };
 
+const resendVerification = async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ success: false, message: 'Email y password son requeridos' });
+        }
+
+        await authService.resendVerification(email, password);
+        res.json({ success: true, message: 'Correo de verificación reenviado' });
+    } catch (error) {
+        res.status(400).json({ success: false, message: error.message });
+    }
+};
+
+const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ success: false, message: 'El email es requerido' });
+        }
+
+        await authService.sendPasswordReset(email);
+        res.json({ success: true, message: 'Email de recuperación enviado exitosamente' });
+    } catch (error) {
+        res.status(400).json({ success: false, message: error.message });
+    }
+};
+
+
+
 module.exports = {
     login,
     signUp,
-    updateProfile
+    updateProfile,
+    resendVerification,
+    forgotPassword
 };

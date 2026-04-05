@@ -13,6 +13,10 @@ router.get('/db/status', dbController.getDbStatus);
 router.post('/auth/login', authController.login);
 router.post('/auth/signup', authController.signUp);
 router.post('/auth/update-profile', authController.updateProfile);
+router.post('/auth/resend-verification', authController.resendVerification);
+router.post('/auth/forgot-password', authController.forgotPassword);
+
+
 
 // Rutas de Estadísticas
 router.get('/stats/personal', statsController.getMyStats);
