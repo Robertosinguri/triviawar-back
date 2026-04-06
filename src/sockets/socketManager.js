@@ -16,7 +16,7 @@ const init = (httpServer) => {
         // Importar handlers
         require('./handlers/gameHandler')(io, socket);
         require('./handlers/statsHandler')(io, socket);
-        // require('./handlers/chatHandler')(io, socket);
+        require('./handlers/chatHandler')(io, socket);
 
         socket.on('disconnect', () => {
             console.log(`❌ Cliente desconectado: ${socket.id}`);
