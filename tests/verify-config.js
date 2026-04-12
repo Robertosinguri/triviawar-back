@@ -6,20 +6,24 @@ function verifyConfiguration() {
 
   const requiredVars = [
     {
+      key: "GEMINI_API_KEY",
+      description: "Plan A - Gemini API Key (Primera opción)",
+    },
+    {
       key: "GROQ_API_KEY",
-      description: "Plan A - Groq API Key (Primera opción)",
+      description: "Plan B - Groq API Key (Segunda opción)",
     },
     {
       key: "COHERE_API_KEY",
-      description: "Plan B - Cohere API Key (Segunda opción)",
+      description: "Plan C - Cohere API Key (Tercera opción)",
     },
     {
       key: "HF_API_KEY",
-      description: "Plan C - Hugging Face API Key (Tercera opción)",
+      description: "Plan D - Hugging Face API Key (Cuarta opción)",
     },
     {
       key: "OPENROUTER_API_KEY",
-      description: "Plan D - OpenRouter API Key (Última opción)",
+      description: "Plan E - OpenRouter API Key (Última opción)",
     },
     {
       key: "PORT",
@@ -136,10 +140,10 @@ function verifyConfiguration() {
   console.log("\n📝 Notas:");
   console.log("--------");
   console.log(
-    "• Orden de planes: Groq (A) → Cohere (B) → HF (C) → OpenRouter (D)",
+    "• Orden de planes: Gemini (A) → Groq (B) → Cohere (C) → HF (D) → OpenRouter (E)",
   );
   console.log(
-    "• OpenRouter es la última opción (Plan D) con modelo específico",
+    "• OpenRouter es la última opción (Plan E) con modelo específico",
   );
   console.log("• Al menos un servicio de IA debe estar configurado");
   console.log("• Para producción, configurar todas las variables requeridas");

@@ -9,6 +9,7 @@
     "docker:build": "docker build -t trivia-war-backend ."
   },
   "dependencies": {
+    "@google/genai": "^1.49.0",
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.13.4",
     "cors": "^2.8.5",
@@ -24,6 +25,6 @@
     "nodemon": "^3.0.3"
   },
   "overrides": {
-  	    "@tootallnate/once": "3.0.1"  	      
+    "@tootallnate/once": "3.0.1"
   }
 }

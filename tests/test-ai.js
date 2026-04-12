@@ -3,7 +3,7 @@ const aiService = require("../src/services/aiService");
 
 async function testAIService() {
   console.log(
-    "🧪 Iniciando prueba del Servicio de IA (OpenRouter como Plan A)...\n",
+    "🧪 Iniciando prueba del Servicio de IA (Gemini como Plan A)...\n",
   );
 
   const testCases = [
@@ -122,8 +122,8 @@ async function testAIService() {
     );
   } else {
     console.log("\n❌ Todos los tests fallaron. Verifica:");
-    console.log("   1. OPENROUTER_API_KEY en .env");
-    console.log("   2. Otras claves API para fallback (GROQ, COHERE, HF)");
+    console.log("   1. GEMINI_API_KEY en .env");
+    console.log("   2. Otras claves API para fallback (GROQ, COHERE, HF, OPENROUTER)");
     console.log("   3. Conexión a internet");
   }
 

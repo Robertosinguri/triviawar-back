@@ -59,10 +59,10 @@ Esta carpeta contiene los scripts de prueba para validar las integraciones con l
 
 El sistema implementa una arquitectura de fallback con 4 planes:
 
-### **Plan A: OpenRouter** (Nuevo - Principal)
-- **Modelo**: `liquid/lfm-2.5-1.2b-thinking:free`
-- **URL**: `https://openrouter.ai/api/v1/chat/completions`
-- **Variable de entorno**: `OPENROUTER_API_KEY`
+### **Plan A: Gemini** (Principal)
+- **Modelo**: `gemini-3.1-flash-lite-preview`
+- **URL**: `https://generativelanguage.googleapis.com/v1beta/models/...`
+- **Variable de entorno**: `GEMINI_API_KEY`
 
 ### **Plan B: Groq** (Respaldo 1)
 - **Modelos**: 
@@ -78,12 +78,16 @@ El sistema implementa una arquitectura de fallback con 4 planes:
 - **Modelo**: `meta-llama/Llama-3.1-8B-Instruct`
 - **Variable de entorno**: `HF_API_KEY`
 
+### **Plan E: OpenRouter** (Respaldo 4)
+- **Modelo**: `liquid/lfm-2.5-1.2b-thinking:free`
+- **Variable de entorno**: `OPENROUTER_API_KEY`
+
 ## 🔧 Configuración Requerida
 
 ### Variables de Entorno (.env)
 ```env
 # Plan A - Principal
-OPENROUTER_API_KEY=tu_clave_openrouter_aqui
+GEMINI_API_KEY=tu_clave_gemini_aqui
 
 # Plan B - Respaldo 1
 GROQ_API_KEY=tu_clave_groq_aqui
@@ -93,13 +97,17 @@ COHERE_API_KEY=tu_clave_cohere_aqui
 
 # Plan D - Respaldo 3
 HF_API_KEY=tu_clave_huggingface_aqui
+
+# Plan E - Respaldo 4
+OPENROUTER_API_KEY=tu_clave_openrouter_aqui
 ```
 
 ### Obtener Claves API
-1. **OpenRouter**: https://openrouter.ai/keys
+1. **Gemini**: https://aistudio.google.com/
 2. **Groq**: https://console.groq.com/keys
 3. **Cohere**: https://dashboard.cohere.com/api-keys
 4. **Hugging Face**: https://huggingface.co/settings/tokens
+5. **OpenRouter**: https://openrouter.ai/keys
 
 ## 📊 Flujo de Ejecución de Tests
 
@@ -113,10 +121,11 @@ cp .env.example .env
 node tests/test-ai.js
 
 # 3. Ejecutar tests específicos por proveedor
-node tests/test-openrouter.js    # OpenRouter (Plan D)
-node tests/test-groq.js          # Groq (Plan A)
-node tests/test-cohere.js        # Cohere (Plan B)
-node tests/test-hf.js            # Hugging Face (Plan C)
+node tests/test-gemini.js        # Gemini (Plan A)
+node tests/test-groq.js          # Groq (Plan B)
+node tests/test-cohere.js        # Cohere (Plan C)
+node tests/test-hf.js            # Hugging Face (Plan D)
+node tests/test-openrouter.js    # OpenRouter (Plan E)
 
 # 4. Ejecutar tests de funcionalidad
 node tests/test-difficulty-levels.js  # Niveles de dificultad
