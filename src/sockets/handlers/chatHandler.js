@@ -25,6 +25,17 @@ function addToPrivateGroup(fromUser, toUser) {
     console.log(`👥 [Grupos] ${fromUser} y ${toUser} ahora están en grupo mutuo`);
 }
 
+// Eliminar relación de grupo privado (BIDIRECCIONAL)
+function removeFromPrivateGroup(fromUser, toUser) {
+    if (userPrivateGroups.has(fromUser)) {
+        userPrivateGroups.get(fromUser).delete(toUser);
+    }
+    if (userPrivateGroups.has(toUser)) {
+        userPrivateGroups.get(toUser).delete(fromUser);
+    }
+    console.log(`💔 [Grupos] ${fromUser} y ${toUser} se han desconectado mutuamente`);
+}
+
 // Obtener miembros del grupo privado de un usuario
 function getPrivateGroupMembers(username) {
     if (!userPrivateGroups.has(username)) {
@@ -43,6 +54,20 @@ module.exports = (io, socket) => {
         socket.username = username;
         connectedUsers.set(username, socket.id);
         
+        // --- LIMPIEZA DE SEGURIDAD AL UNIRSE ---
+        if (userPrivateGroups.has(username)) {
+            const myGroup = userPrivateGroups.get(username);
+            myGroup.forEach(member => {
+                if (!connectedUsers.has(member)) {
+                    myGroup.delete(member);
+                    if (userPrivateGroups.has(member)) {
+                        userPrivateGroups.get(member).delete(username);
+                    }
+                }
+            });
+            if (myGroup.size === 0) userPrivateGroups.delete(username);
+        }
+
         const joinMsg = {
             id: 'system-' + Date.now(),
             text: `${username} se ha unido al chat${roomId ? ' de la sala' : ''}`,
@@ -55,25 +80,17 @@ module.exports = (io, socket) => {
         if (!roomId) {
             // Chat GLOBAL
             globalHistory.push(joinMsg);
-            if (globalHistory.length > MAX_HISTORY) {
-                globalHistory.shift();
-            }
+            if (globalHistory.length > MAX_HISTORY) globalHistory.shift();
             io.emit('chat:message', joinMsg);
             
-            // Enviar historial SOLO si es la primera vez que este socket se conecta
-            // (no en reconexiones)
             if (!socket.hasReceivedHistory) {
                 socket.emit('chat:history', globalHistory);
                 socket.hasReceivedHistory = true;
-                console.log(`📜 [Backend] Enviando historial a ${username} (primera conexión)`);
-            } else {
-                console.log(`📜 [Backend] ${username} se reconectó, NO enviando historial`);
             }
         } else {
             io.to(`chat_room_${roomId}`).emit('chat:message', joinMsg);
         }
         
-        // Enviar lista actualizada de usuarios
         sendUserList(io);
     });
 
@@ -91,57 +108,40 @@ module.exports = (io, socket) => {
         };
 
         if (!roomId) {
-            // Mensaje GLOBAL
             globalHistory.push(messageObj);
-            if (globalHistory.length > MAX_HISTORY) {
-                globalHistory.shift();
-            }
+            if (globalHistory.length > MAX_HISTORY) globalHistory.shift();
             io.emit('chat:message', messageObj);
         } else {
-            // Mensaje de SALA
             io.to(`chat_room_${roomId}`).emit('chat:message', messageObj);
         }
     });
 
-    // Mensaje PRIVADO (1-a-1 o 1-a-muchos) con grupos bidireccionales
+    // Mensaje PRIVADO
     socket.on('chat:private_message', (data) => {
         const { text, targetUsername, fromUsername } = data;
-        
-        // Separar múltiples destinatarios (si vienen separados por comas)
         const targetUsernames = targetUsername.split(',').map(u => u.trim());
         
-        console.log(`📤 [Backend] Mensaje privado de ${fromUsername} a ${targetUsernames.length} usuarios:`, targetUsernames);
-
-        // Para cada destinatario, establecer relación bidireccional
         targetUsernames.forEach(singleTarget => {
-            // Establecer relación de grupo bidireccional
             addToPrivateGroup(fromUsername, singleTarget);
-            
             const targetSocketId = connectedUsers.get(singleTarget);
 
             const pmObj = {
                 id: 'pm-' + Date.now() + Math.random().toString(36).substr(2, 5),
                 text,
                 username: fromUsername,
-                target: targetUsername, // Mantener la lista completa para referencia
-                targetUsername: singleTarget, // Destinatario individual
+                target: targetUsername,
+                targetUsername: singleTarget,
                 timestamp: new Date(),
                 isPrivate: true,
-                // Información adicional para el frontend
-                groupAction: 'add_mutual', // Indica que se debe agregar mutuamente
-                mutualUsers: [fromUsername, singleTarget] // Usuarios que ahora están en grupo mutuo
+                groupAction: 'add_mutual',
+                mutualUsers: [fromUsername, singleTarget]
             };
 
             if (targetSocketId) {
-                // Enviar al destinatario
                 io.to(targetSocketId).emit('chat:private_message', pmObj);
-                console.log(`   → Enviado a ${singleTarget} (grupo bidireccional establecido)`);
-            } else {
-                console.log(`   ⚠️ Usuario ${singleTarget} no encontrado`);
             }
         });
 
-        // También enviar al remitente para que lo vea en su historial
         const senderPmObj = {
             id: 'pm-sender-' + Date.now() + Math.random().toString(36).substr(2, 5),
             text,
@@ -154,53 +154,92 @@ module.exports = (io, socket) => {
         };
         socket.emit('chat:private_message', senderPmObj);
         
-        // Enviar actualización de grupo al remitente
-        const groupUpdateMsg = {
+        socket.emit('chat:group_update', {
             id: 'group-update-' + Date.now(),
             type: 'group_updated',
             username: fromUsername,
             members: getPrivateGroupMembers(fromUsername),
             timestamp: new Date()
-        };
-        socket.emit('chat:group_update', groupUpdateMsg);
+        });
     });
 
     // Obtener miembros del grupo privado
     socket.on('chat:get_private_group', (data) => {
         const { username } = data;
-        const members = getPrivateGroupMembers(username);
-        
-        const groupInfo = {
+        socket.emit('chat:group_info', {
             id: 'group-info-' + Date.now(),
             type: 'group_info',
             username,
-            members,
+            members: getPrivateGroupMembers(username),
             timestamp: new Date()
+        });
+    });
+
+    // Abandonar conversación privada (Bidireccional)
+    socket.on('chat:leave_private', (data) => {
+        const { targetUsername, fromUsername } = data;
+        removeFromPrivateGroup(fromUsername, targetUsername);
+
+        // Notificar a ambos usuarios
+        const notify = (user, skipSocket = false) => {
+            const updateMsg = {
+                id: 'group-update-' + Date.now(),
+                type: 'group_updated',
+                username: user,
+                members: getPrivateGroupMembers(user),
+                timestamp: new Date()
+            };
+            const sid = connectedUsers.get(user);
+            if (sid) io.to(sid).emit('chat:group_update', updateMsg);
         };
-        
-        socket.emit('chat:group_info', groupInfo);
+
+        notify(fromUsername);
+        notify(targetUsername);
     });
 
-    // Unirse a sala de chat específica
+
+
+    // Salas
     socket.on('chat:join_room', (data) => {
-        const { roomId } = data;
-        socket.join(`chat_room_${roomId}`);
-        console.log(`Usuario ${socket.username} se unió a chat_room_${roomId}`);
+        socket.join(`chat_room_${data.roomId}`);
     });
 
-    // Salir de sala de chat específica
     socket.on('chat:leave_room', (data) => {
-        const { roomId } = data;
-        socket.leave(`chat_room_${roomId}`);
-        console.log(`Usuario ${socket.username} salió de chat_room_${roomId}`);
+        socket.leave(`chat_room_${data.roomId}`);
     });
 
-    // Manejar desconexión específica para chat
     socket.on('disconnect', () => {
         if (socket.username) {
-            connectedUsers.delete(socket.username);
-            // Opcional: limpiar grupos del usuario desconectado
-            // userPrivateGroups.delete(socket.username);
+            console.log(`🔌 [Backend] Usuario desconectado: ${socket.username}. Limpiando grupos privados.`);
+            
+            const username = socket.username;
+            const myMembers = getPrivateGroupMembers(username);
+
+            // Notificar a todos los que estaban hablando conmigo que ya no estoy disponible
+            myMembers.forEach(otherUser => {
+                // Eliminarme de la lista del otro usuario
+                if (userPrivateGroups.has(otherUser)) {
+                    userPrivateGroups.get(otherUser).delete(username);
+                    
+                    // Notificarle que su lista cambió
+                    const sid = connectedUsers.get(otherUser);
+                    if (sid) {
+                        io.to(sid).emit('chat:group_update', {
+                            id: 'group-disconnect-' + Date.now(),
+                            type: 'group_updated',
+                            username: otherUser,
+                            members: getPrivateGroupMembers(otherUser),
+                            timestamp: new Date()
+                        });
+                    }
+                }
+            });
+
+            // Limpiar mi propia lista
+            userPrivateGroups.delete(username);
+            
+            // Quitar de la lista de usuarios conectados
+            connectedUsers.delete(username);
             sendUserList(io);
         }
     });
