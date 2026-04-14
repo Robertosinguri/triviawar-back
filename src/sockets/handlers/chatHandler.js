@@ -34,6 +34,9 @@ function getPrivateGroupMembers(username) {
 }
 
 module.exports = (io, socket) => {
+    // Track si este socket ya ha recibido historial
+    socket.hasReceivedHistory = false;
+    
     // Unirse al chat
     socket.on('chat:join', (data) => {
         const { username, roomId } = data;
@@ -56,8 +59,16 @@ module.exports = (io, socket) => {
                 globalHistory.shift();
             }
             io.emit('chat:message', joinMsg);
-            // Enviar historial al nuevo usuario
-            socket.emit('chat:history', globalHistory);
+            
+            // Enviar historial SOLO si es la primera vez que este socket se conecta
+            // (no en reconexiones)
+            if (!socket.hasReceivedHistory) {
+                socket.emit('chat:history', globalHistory);
+                socket.hasReceivedHistory = true;
+                console.log(`📜 [Backend] Enviando historial a ${username} (primera conexión)`);
+            } else {
+                console.log(`📜 [Backend] ${username} se reconectó, NO enviando historial`);
+            }
         } else {
             io.to(`chat_room_${roomId}`).emit('chat:message', joinMsg);
         }
