@@ -8,7 +8,10 @@ const apiRoutes = require('./routes/apiRoutes');
 const app = express();
 
 // Middlewares Globales
-app.use(helmet()); // Seguridad headers
+// Configurar helmet para permitir recursos cross-origin (necesario para audio)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+})); // Seguridad headers
 app.use(cors());   // Permitir peticiones de otros dominios
 app.use(express.json()); // Parsear body JSON
 app.use(morgan('dev'));  // Logs de peticiones HTTP

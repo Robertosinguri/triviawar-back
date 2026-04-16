@@ -5,6 +5,7 @@ const authController = require('../controllers/authController');
 const statsController = require('../controllers/statsController');
 const roomController = require('../controllers/roomController');
 const dbController = require('../controllers/dbController');
+const audioController = require('../controllers/audioController');
 
 // Comprobar estado de Firestore y colecciones (para verificar que existen / son accesibles)
 router.get('/db/status', dbController.getDbStatus);
@@ -28,5 +29,9 @@ router.post('/games/submit-result', gameController.submitResult);
 
 // Rutas de Salas (el frontend hace GET /rooms/:code para polling de resultados)
 router.get('/rooms/:code', roomController.getRoom);
+
+// Rutas de Audio
+router.get('/audio/list', audioController.listAudioFiles);
+router.get('/audio/:filename', audioController.getAudio);
 
 module.exports = router;
