@@ -9,6 +9,7 @@ const audioController = require('../controllers/audioController');
 
 // Comprobar estado de Firestore y colecciones (para verificar que existen / son accesibles)
 router.get('/db/status', dbController.getDbStatus);
+router.get('/db/clear-rooms', dbController.clearRooms);
 
 // Rutas de Autenticación
 router.post('/auth/login', authController.login);
@@ -28,6 +29,7 @@ router.post('/games/generate-questions', gameController.generateQuestions);
 router.post('/games/submit-result', gameController.submitResult);
 
 // Rutas de Salas (el frontend hace GET /rooms/:code para polling de resultados)
+router.get('/rooms', roomController.getActiveRooms);
 router.get('/rooms/:code', roomController.getRoom);
 
 // Rutas de Audio

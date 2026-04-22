@@ -54,6 +54,18 @@ const getDbStatus = async (req, res) => {
     }
 };
 
+const clearRooms = async (req, res) => {
+    try {
+        const roomService = require('../services/roomService');
+        const result = await roomService.clearRooms();
+        res.json(result);
+    } catch (error) {
+        console.error('❌ Error en dbController.clearRooms:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
-    getDbStatus
+    getDbStatus,
+    clearRooms
 };

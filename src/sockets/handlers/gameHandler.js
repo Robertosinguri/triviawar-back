@@ -9,7 +9,11 @@ module.exports = (io, socket) => {
         try {
             const hostName = (data.host && data.host.nombre) || data.nombre || 'Anónimo';
             console.log(`🔌 Socket ${socket.id} (${hostName}) creando sala`);
-            const newRoom = await roomService.createRoom(data); // data debe traer { host: {...}, nombre, maxJugadores }
+            const newRoom = await roomService.createRoom(data);
+            
+            // Vincular datos al socket para limpieza en desconexión
+            socket.roomCode = newRoom.id;
+            socket.userId = (data.host && data.host.id) || data.id;
 
             socket.join(newRoom.id);
             socket.emit('room_created', newRoom);
@@ -22,19 +26,18 @@ module.exports = (io, socket) => {
 
     // UNIRSE A SALA
     socket.on('join_room', async (data) => {
-        // data: { roomCode, player: { id, nombre, ... } }
         try {
             const { roomCode, player } = data;
             console.log(`🔌 Socket ${socket.id} (${player.nombre}) intentando unirse a sala ${roomCode}`);
 
             const updatedRoom = await roomService.joinRoom(roomCode, player);
 
-            // Unir el socket al canal de Socket.io
+            // Vincular datos al socket para limpieza en desconexión
+            socket.roomCode = roomCode;
+            socket.userId = player.id;
+
             socket.join(roomCode);
-
-            // Notificar a TODOS en la sala (incluido el que se unió para confirmar)
             io.to(roomCode).emit('room_updated', updatedRoom);
-
             console.log(`✅ Jugador ${player.nombre} unido a ${roomCode}`);
         } catch (error) {
             console.error('❌ Error en join_room:', error.message);
@@ -42,18 +45,38 @@ module.exports = (io, socket) => {
         }
     });
 
-    // SALIR DE SALA
+    // DESCONEXIÓN (Cerrar pestaña, pérdida de red, etc.)
+    socket.on('disconnect', async () => {
+        if (socket.roomCode && socket.userId) {
+            console.log(`🔌 Cliente ${socket.userId} desconectado. Limpiando sala ${socket.roomCode}...`);
+            try {
+                const updatedRoom = await roomService.leaveRoom(socket.roomCode, socket.userId);
+                if (updatedRoom) {
+                    io.to(socket.roomCode).emit('room_updated', updatedRoom);
+                } else {
+                    console.log(`🗑️ Sala ${socket.roomCode} eliminada automáticamente (quedó vacía)`);
+                }
+            } catch (error) {
+                console.error('❌ Error limpiando sala en desconexión:', error.message);
+            }
+        }
+    });
+
+    // SALIR DE SALA (Manual)
     socket.on('leave_room', async (data) => {
         try {
             const { roomCode, userId } = data;
             const updatedRoom = await roomService.leaveRoom(roomCode, userId);
+
+            // Limpiar vínculos
+            socket.roomCode = null;
+            socket.userId = null;
 
             socket.leave(roomCode);
 
             if (updatedRoom) {
                 io.to(roomCode).emit('room_updated', updatedRoom);
             } else {
-                // La sala se eliminó
                 console.log(`🗑️ Sala ${roomCode} eliminada (vacía)`);
             }
         } catch (error) {
@@ -67,6 +90,14 @@ module.exports = (io, socket) => {
             const { roomCode, userId, config } = data;
             const updatedRoom = await roomService.updatePlayerConfig(roomCode, userId, config);
             io.to(roomCode).emit('room_updated', updatedRoom);
+
+            const jugadoresListos = updatedRoom.jugadores.filter(p => p.configurado).length;
+            if (jugadoresListos === updatedRoom.maxJugadores) {
+                console.log(`🚀 Todos los jugadores están listos. Iniciando juego automáticamente en sala ${roomCode}`);
+                io.to(roomCode).emit('game_loading', { message: 'Generando preguntas con IA...' });
+                const gameData = await gameService.startGame(roomCode);
+                io.to(roomCode).emit('game_started', gameData);
+            }
         } catch (error) {
             socket.emit('error', { message: error.message });
         }

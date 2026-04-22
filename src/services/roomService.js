@@ -11,9 +11,8 @@ const createRoom = async (data) => {
         id: host.id,
         nombre: host.nombre,
         esHost: true,
-        configurado: !!(host.tematica && host.dificultad),
-        tematica: host.tematica || '',
-        dificultad: host.dificultad || ''
+        configurado: false,
+        tematica: ''
     };
 
     const newRoom = {
@@ -21,6 +20,7 @@ const createRoom = async (data) => {
         roomCode,
         fechaCreacion: new Date().toISOString(),
         estado: 'esperando',
+        nombre: data.nombre || `${host.nombre}'s Game`,
         jugadores: [hostPlayer],
         maxJugadores: maxJugadores
     };
@@ -53,9 +53,8 @@ const joinRoom = async (roomCode, playerParams) => {
         id: playerParams.id,
         nombre: playerParams.nombre,
         esHost: false,
-        configurado: !!(playerParams.tematica && playerParams.dificultad),
-        tematica: playerParams.tematica,
-        dificultad: playerParams.dificultad
+        configurado: false,
+        tematica: ''
     };
 
     room.jugadores.push(newPlayer);
@@ -98,12 +97,41 @@ const updatePlayerConfig = async (roomCode, userId, config) => {
     const player = room.jugadores.find(p => p.id === userId);
     if (!player) throw new Error('Jugador no encontrado en sala');
 
-    player.tematica = config.tematica;
-    player.dificultad = config.dificultad;
-    player.configurado = true;
+    if (config.configurado && config.tematica) {
+        const temaEnUso = room.jugadores.find(p => p.id !== userId && p.configurado && p.tematica.toLowerCase() === config.tematica.toLowerCase());
+        if (temaEnUso) {
+            throw new Error('El tema ya fue elegido');
+        }
+    }
+
+    player.tematica = config.tematica || '';
+    player.configurado = config.configurado;
 
     await roomRepository.updateRoom(roomCode, { jugadores: room.jugadores });
     return room;
+};
+
+const getActiveRooms = async () => {
+    const allRooms = await roomRepository.getAllRooms();
+    console.log(`🔍 [DEBUG] getActiveRooms - Total en DB: ${allRooms.length}`);
+    
+    // Retornamos solo salas en espera que tengan cupo y NOMBRE
+    const filtered = allRooms.filter(r => 
+        r.estado === 'esperando' && 
+        (r.jugadores || []).length < (r.maxJugadores || 4) &&
+        r.nombre && r.nombre.trim() !== ''
+    );
+
+    console.log(`🔍 [DEBUG] getActiveRooms - Filtradas (activas): ${filtered.length}`);
+    return filtered;
+};
+
+const clearRooms = async () => {
+    const allRooms = await roomRepository.getAllRooms();
+    for (const room of allRooms) {
+        await roomRepository.deleteRoom(room.id);
+    }
+    return { success: true, deletedCount: allRooms.length };
 };
 
 module.exports = {
@@ -111,6 +139,8 @@ module.exports = {
     joinRoom,
     leaveRoom,
     updatePlayerConfig,
+    getActiveRooms,
+    clearRooms,
     getRoom: roomRepository.getRoom,
     updateRoomStatus: async (roomCode, status, results = null) => {
         const updates = { estado: status };

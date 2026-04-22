@@ -17,35 +17,23 @@ const startGame = async (roomCode) => {
     // 2. Recopilar preferencias de todos los jugadores
     // Extraemos todas las temáticas y dificultades seleccionadas
     const tematicas = new Set();
-    const dificultades = new Set();
 
     room.jugadores.forEach(j => {
         if (j.tematica) tematicas.add(j.tematica);
-        if (j.dificultad) dificultades.add(j.dificultad);
     });
 
     // Si nadie eligió nada, usamos defaults
     const listaTematicas = tematicas.size > 0 ? Array.from(tematicas) : ['General'];
 
-    // 🎯 FIX: Selección inteligente de dificultad
-    let dificultadFinal = 'baby'; // Default seguro
-    if (dificultades.size > 0) {
-        const difs = Array.from(dificultades);
-        // Si hay múltiples dificultades, priorizar la más difícil
-        if (difs.includes('killer')) dificultadFinal = 'killer';
-        else if (difs.includes('conocedor')) dificultadFinal = 'conocedor';
-        else dificultadFinal = difs[0]; // Tomar la primera si no hay killer/conocedor
-    }
-
-    console.log(`🎯 Dificultad seleccionada: ${dificultadFinal} (de opciones: ${Array.from(dificultades).join(', ') || 'ninguna'})`);
+    console.log(`🎯 Temáticas recolectadas para la partida: ${listaTematicas.join(', ')}`);
 
     try {
         // 🔒 BLOQUEO: Marcar sala como "generando" para bloquear otros clics
         await roomRepository.updateRoom(roomCode, { estado: 'generating' });
 
         // 3. Generar preguntas con IA
-        console.log(`🤖 Solicitando preguntas para: ${listaTematicas.join(', ')} | Dificultad: ${dificultadFinal}`);
-        const resultAI = await aiService.generateQuestions(listaTematicas, dificultadFinal);
+        console.log(`🤖 Solicitando preguntas para: ${listaTematicas.join(', ')}`);
+        const resultAI = await aiService.generateQuestions(listaTematicas);
 
         // 4. Actualizar estado de sala
         const updates = {
@@ -59,7 +47,7 @@ const startGame = async (roomCode) => {
         return {
             success: true,
             preguntas: resultAI.preguntas,
-            dificultad: dificultadFinal, // 🎯 Incluir dificultad usada
+            dificultad: 'mixed', // 🎯 Dificultad mixta
             tematicas: listaTematicas,   // 📚 Incluir temáticas usadas
             aiInfo: {
                 model: resultAI.aiUsada,

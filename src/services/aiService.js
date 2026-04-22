@@ -18,64 +18,40 @@ const HF_URL = "https://router.huggingface.co/v1/chat/completions";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 const SYSTEM_INSTRUCTION = `Eres un Maestro de Trivia Profesional y un experto en taxonomía del conocimiento.
-Tu única misión es generar un JSON que contenga exactamente 5 preguntas de alta calidad.
+Tu única misión es generar un JSON puro que contenga preguntas de alta calidad.
 - Formato: Array de objetos JSON.
-- Nivel de dificultad: Debes ser EXTREMADAMENTE estricto con el nivel solicitado (Baby, Conocedor o Killer).
+- Por cada temática recibida, debes generar EXACTAMENTE 3 preguntas: 1 nivel "baby", 1 "conocedor" y 1 "killer".
+- El JSON final debe contener la dificultad asignada para cada pregunta en el campo "dificultad" ('baby', 'conocedor' o 'killer').
 - Regla de Respuesta: El campo "respuestaCorrecta" DEBE ser el índice exacto (0-3) de la opción correcta.
 - Salida: ÚNICAMENTE el código JSON puro, sin explicaciones ni markdown.`;
 
 // Helper para construir prompt completo con distribución de temas
-const buildPrompt = (tematicas, dificultad) => {
-  const nivelConfig = {
-    baby: {
-      desc: "MUY FÁCIL (Nivel Principiante)",
-      persona: "un profesor de primaria amable",
-      guia: "Usa lenguaje simple, conceptos básicos y cultura general masiva. Las opciones deben ser muy fáciles de descartar.",
-    },
-    conocedor: {
-      desc: "INTERMEDIO (Nivel Aficionado)",
-      persona: "un entusiasta avanzado o estudiante universitario",
-      guia: "Usa términos que requieran haber estudiado o trabajado en el tema. Datos que no sabe el público general.",
-    },
-    killer: {
-      desc: "Nivel EXPERTO TOTAL (Nivel Principal Engineer / CTO)",
-      persona:
-        "un arquitecto de sistemas implacable y experto senior en la materia",
-      guia: "CRÍTICO: Si un estudiante o un senior promedio puede responder esto en menos de 10 segundos, HAS FALLADO. Prohibido usar nombres de ataques o conceptos conocidos en el enunciado. Describe la falla de implementación, la colisión de protocolos, el comportamiento de memoria o los logs de error. Sé denso, técnico y especializado. No expliques qué son las cosas.",
-    },
-  };
-
-  const config = nivelConfig[dificultad] || nivelConfig["conocedor"];
-
-  const distribucion = tematicas
-    .map((tema, i) => {
-      const base = Math.floor(5 / tematicas.length);
-      const extra = i < 5 % tematicas.length ? 1 : 0;
-      return `${base + extra} de "${tema}"`;
-    })
-    .join(", ");
-
-  return `ACTÚA COMO ${config.persona.toUpperCase()}.
-GENERA 5 PREGUNTAS EN NIVEL ${config.desc} sobre: ${tematicas.join(", ")}.
+const buildPrompt = (tematicas) => {
+  const totalPreguntas = tematicas.length * 3;
+  return `ACTÚA COMO UN MAESTRO DE TRIVIA PROFESIONAL.
+GENERA EXACTAMENTE ${totalPreguntas} PREGUNTAS EN TOTAL sobre las siguientes temáticas: ${tematicas.join(", ")}.
 
 REGLAS DE DOMINIO PARA ESTA SESIÓN:
-- DISTRIBUCIÓN: ${distribucion}
-- RIGOR: ${config.guia}
+Por CADA temática proporcionada, genera exactamente 3 preguntas siguiendo esta curva:
+1. Una pregunta Nivel "baby": MUY FÁCIL, conceptos básicos.
+2. Una pregunta Nivel "conocedor": INTERMEDIO, datos específicos.
+3. Una pregunta Nivel "killer": EXPERTO TOTAL, denso, técnico y especializado.
 
 FORMATO JSON OBLIGATORIO (Array de objetos):
 [
   {
-    "pregunta": "texto de la pregunta técnico y profesional",
+    "pregunta": "texto de la pregunta...",
     "opciones": ["...", "...", "...", "..."],
     "respuestaCorrecta": 0,
-    "tematica": "categoría"
+    "tematica": "categoría",
+    "dificultad": "baby"
   }
 ]
 
 REGLAS CRÍTICAS:
 - El índice "respuestaCorrecta" (0-3) debe ser exacto.
 - NO uses markdown (\`\`\`json).
-- EVITA preguntas de cultura general. Sé específico hasta la médula técnica.`;
+- Cada temática debe tener exactamente sus 3 preguntas.`;
 };
 
 function initOpenRouter() {
@@ -100,7 +76,7 @@ initOpenRouter();
  * PLAN E: OpenRouter (Última opción)
  */
 
-const generateWithOpenRouter = async (tematicas, dificultad) => {
+const generateWithOpenRouter = async (tematicas) => {
   if (!OPENROUTER_API_KEY) {
     console.warn(
       "⚠️ [PLAN E] OpenRouter omitido: Falta OPENROUTER_API_KEY en .env",
@@ -113,7 +89,7 @@ const generateWithOpenRouter = async (tematicas, dificultad) => {
 
   const activeModel = OPENROUTER_MODEL; // Modelo único para OpenRouter
   const startTime = Date.now();
-  const prompt = buildPrompt(tematicas, dificultad);
+  const prompt = buildPrompt(tematicas);
 
   try {
     const response = await fetch(OPENROUTER_URL, {
@@ -165,14 +141,14 @@ const generateWithOpenRouter = async (tematicas, dificultad) => {
  * PLAN A: Gemini (Principal - Ultra Rápido)
  */
 
-const generateWithGemini = async (tematicas, dificultad) => {
+const generateWithGemini = async (tematicas) => {
   if (!GEMINI_API_KEY) {
     console.warn("⚠️ [PLAN A] Gemini omitido: Falta GEMINI_API_KEY en .env");
     return null;
   }
   console.log(`🚀 [PLAN A] Intentando generación con Gemini (${GEMINI_MODEL})...`);
   const startTime = Date.now();
-  const prompt = buildPrompt(tematicas, dificultad);
+  const prompt = buildPrompt(tematicas);
 
   try {
     const response = await fetch(GEMINI_URL, {
@@ -217,32 +193,20 @@ const generateWithGemini = async (tematicas, dificultad) => {
  * PLAN B: Groq (Llama 3 70B) - Segunda opción
  */
 
-const generateWithGroq = async (tematicas, dificultad) => {
+const generateWithGroq = async (tematicas) => {
   if (!GROQ_API_KEY) {
     console.warn("⚠️ [PLAN B] Groq omitido: Falta GROQ_API_KEY en .env");
     return null;
   }
 
-  // LÓGICA INTELIGENTE POR DIFICULTAD
-  let activeModel;
-  let modelDescription;
-  
-  if (dificultad === "baby") {
-    activeModel = GROQ_MODEL_SMALL; // llama-3.1-8b-instant
-    modelDescription = "8B (Baby - Máxima eficiencia)";
-  } else if (dificultad === "conocedor" || dificultad === "killer") {
-    activeModel = GROQ_MODEL_LARGE; // llama-3.3-70b-versatile
-    modelDescription = "70B (Killer/Conocedor - Máxima calidad)";
-  } else {
-    activeModel = GROQ_MODEL_LARGE; // Por defecto calidad
-    modelDescription = "70B (Por defecto - Calidad)";
-  }
+  // Ahora se generan todas las dificultades, usamos el modelo capaz de killer
+  let activeModel = GROQ_MODEL_LARGE;
+  let modelDescription = "70B (Mixto - Máxima calidad)";
 
   console.log(`🚀 [PLAN B] Intentando generación con Groq (${modelDescription})...`);
-  console.log(`   📊 Dificultad: ${dificultad} → Modelo: ${activeModel}`);
 
   const startTime = Date.now();
-  const prompt = buildPrompt(tematicas, dificultad);
+  const prompt = buildPrompt(tematicas);
 
   try {
     const response = await fetch(GROQ_URL, {
@@ -285,11 +249,11 @@ const generateWithGroq = async (tematicas, dificultad) => {
  * PLAN C: Cohere (Muy estable) - Tercera opción
  */
 
-const generateWithCohere = async (tematicas, dificultad) => {
+const generateWithCohere = async (tematicas) => {
   if (!COHERE_API_KEY) return null;
   console.log("🧡 [PLAN C] Intentando generación con Cohere...");
   const startTime = Date.now();
-  const prompt = buildPrompt(tematicas, dificultad);
+  const prompt = buildPrompt(tematicas);
 
   try {
     const response = await fetch("https://api.cohere.ai/v2/chat", {
@@ -330,11 +294,11 @@ const generateWithCohere = async (tematicas, dificultad) => {
  * PLAN D: Hugging Face - Cuarta opción
  */
 
-const generateWithHF = async (tematicas, dificultad) => {
+const generateWithHF = async (tematicas) => {
   if (!HF_API_KEY) return null;
   console.log("🔄 [PLAN D] Intentando generación con HF...");
   const startTime = Date.now();
-  const prompt = buildPrompt(tematicas, dificultad);
+  const prompt = buildPrompt(tematicas);
 
   try {
     const response = await fetch(HF_URL, {
@@ -397,7 +361,7 @@ const normalizeQuestions = (preguntasRaw, tematicas) => {
     data = [data];
   }
 
-  return data.slice(0, 5).map((p) => {
+  return data.map((p) => {
     // Normalización de propiedades para asegurar compatibilidad
     const opciones = p.opciones ||
       p.options ||
@@ -419,6 +383,7 @@ const normalizeQuestions = (preguntasRaw, tematicas) => {
         : 0,
       tematica:
         p.tematica || p.category || p.topic || tematicas[0] || "General",
+      dificultad: p.dificultad || 'conocedor'
     };
   });
 };
@@ -442,13 +407,12 @@ const cleanJsonResponse = (text) => {
   return cleaned;
 };
 
-const generateQuestions = async (tematicas, dificultad) => {
+const generateQuestions = async (tematicas) => {
   const startTime = Date.now();
-  const prompt = buildPrompt(tematicas, dificultad);
+  const prompt = buildPrompt(tematicas);
 
   console.log(`\n🎯 SOLICITUD DE GENERACIÓN DE PREGUNTAS`);
   console.log(`   📋 Temáticas: ${tematicas.join(', ')}`);
-  console.log(`   🎯 Dificultad: ${dificultad}`);
   console.log(`   🔄 Orden de prioridad (nueva estrategia):`);
   console.log(`      1. PLAN A: Gemini (3.1 Flash Lite - Principal)`);
   console.log(`      2. PLAN B: Groq (modelo inteligente por dificultad)`);
@@ -458,7 +422,7 @@ const generateQuestions = async (tematicas, dificultad) => {
 
   // 1. Gemini (Plan A) - Principal
   console.log(`\n🔧 [PLAN A] Intentando Gemini (3.1 Flash Lite)...`);
-  const geminiRes = await generateWithGemini(tematicas, dificultad);
+  const geminiRes = await generateWithGemini(tematicas);
   if (geminiRes) {
     console.log(`✅ [PLAN A] Éxito con Gemini`);
     return geminiRes;
@@ -467,7 +431,7 @@ const generateQuestions = async (tematicas, dificultad) => {
 
   // 2. Groq (Plan B) - Segunda opción con lógica inteligente por dificultad
   console.log(`\n🔧 [PLAN B] Ejecutando estrategia inteligente (Groq)...`);
-  const groqRes = await generateWithGroq(tematicas, dificultad);
+  const groqRes = await generateWithGroq(tematicas);
   if (groqRes) {
     console.log(`✅ [PLAN B] Éxito con Groq (${groqRes.aiUsada})`);
     return groqRes;
@@ -476,7 +440,7 @@ const generateQuestions = async (tematicas, dificultad) => {
 
   // 3. Cohere (Plan C) - Tercera opción (equilibrio calidad/eficiencia)
   console.log(`\n🔧 [PLAN C] Intentando Cohere (35B)...`);
-  const cohereRes = await generateWithCohere(tematicas, dificultad);
+  const cohereRes = await generateWithCohere(tematicas);
   if (cohereRes) {
     console.log(`✅ [PLAN C] Éxito con Cohere`);
     return cohereRes;
@@ -485,7 +449,7 @@ const generateQuestions = async (tematicas, dificultad) => {
 
   // 4. HF (Plan D) - Cuarta opción (gratuito sólido)
   console.log(`\n🔧 [PLAN D] Intentando Hugging Face (8B)...`);
-  const hfRes = await generateWithHF(tematicas, dificultad);
+  const hfRes = await generateWithHF(tematicas);
   if (hfRes) {
     console.log(`✅ [PLAN D] Éxito con Hugging Face`);
     return hfRes;
@@ -494,7 +458,7 @@ const generateQuestions = async (tematicas, dificultad) => {
 
   // 5. OpenRouter (Plan E) - Última opción (último recurso)
   console.log(`\n🔧 [PLAN E] Intentando OpenRouter (1.2B free)...`);
-  const openRouterRes = await generateWithOpenRouter(tematicas, dificultad);
+  const openRouterRes = await generateWithOpenRouter(tematicas);
   if (openRouterRes) {
     console.log(`✅ [PLAN E] Éxito con OpenRouter`);
     return openRouterRes;

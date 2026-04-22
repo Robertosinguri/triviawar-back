@@ -80,7 +80,15 @@ async function startApplication(port) {
 
     process.on('SIGINT', () => {
       console.log('🛑 Recibida señal SIGINT (Ctrl+C). Cerrando servidor...');
+      
+      // Intentar cierre limpio durante 2 segundos
+      const forceExit = setTimeout(() => {
+        console.log('⚠️  Cierre limpio excedió el tiempo. Forzando salida...');
+        process.exit(0);
+      }, 2000);
+
       server.close(() => {
+        clearTimeout(forceExit);
         console.log('✅ Servidor cerrado exitosamente.');
         process.exit(0);
       });
@@ -109,6 +117,15 @@ async function startApplication(port) {
 // Iniciar la aplicación
 (async () => {
   try {
+    const roomService = require('./src/services/roomService');
+    console.log('🧹 Limpiando salas antiguas de la base de datos...');
+    try {
+      const result = await roomService.clearRooms();
+      console.log(`✅ Limpieza completada: ${result.deletedCount} salas eliminadas.`);
+    } catch (e) {
+      console.warn('⚠️ No se pudo limpiar la base de datos al inicio:', e.message);
+    }
+
     const availablePort = await findAvailablePort(DEFAULT_PORT);
     await startApplication(availablePort);
   } catch (err) {

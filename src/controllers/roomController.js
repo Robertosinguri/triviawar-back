@@ -15,6 +15,18 @@ const getRoom = async (req, res) => {
     }
 };
 
+const getActiveRooms = async (req, res) => {
+    try {
+        res.setHeader('Cache-Control', 'no-store');
+        const rooms = await roomService.getActiveRooms();
+        res.json(rooms);
+    } catch (error) {
+        console.error('❌ Error en roomController.getActiveRooms:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
-    getRoom
+    getRoom,
+    getActiveRooms
 };

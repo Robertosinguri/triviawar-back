@@ -18,9 +18,14 @@ const deleteRoom = async (roomCode) => {
     return await firestoreService.borrar(COLLECTION, { roomCode });
 };
 
+const getAllRooms = async () => {
+    return await firestoreService.obtenerTodos(COLLECTION);
+};
+
 module.exports = {
     createRoom,
     getRoom,
     updateRoom,
-    deleteRoom
+    deleteRoom,
+    getAllRooms
 };
