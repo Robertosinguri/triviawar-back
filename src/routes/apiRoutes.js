@@ -17,6 +17,7 @@ router.post('/auth/signup', authController.signUp);
 router.post('/auth/update-profile', authController.updateProfile);
 router.post('/auth/resend-verification', authController.resendVerification);
 router.post('/auth/forgot-password', authController.forgotPassword);
+router.post('/auth/google-login', authController.googleLogin);
 
 
 

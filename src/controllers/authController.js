@@ -75,12 +75,25 @@ const forgotPassword = async (req, res) => {
     }
 };
 
+const googleLogin = async (req, res) => {
+    try {
+        const { idToken } = req.body;
+        if (!idToken) {
+            return res.status(400).json({ success: false, message: 'ID Token es requerido' });
+        }
 
+        const user = await authService.googleLogin(idToken);
+        res.json({ success: true, user });
+    } catch (error) {
+        res.status(401).json({ success: false, message: error.message });
+    }
+};
 
 module.exports = {
     login,
     signUp,
     updateProfile,
     resendVerification,
-    forgotPassword
+    forgotPassword,
+    googleLogin
 };

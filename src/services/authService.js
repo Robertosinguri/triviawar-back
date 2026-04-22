@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { auth, db } = require('../config/firebase');
+const firestoreService = require('./firestoreService');
 
 const FIREBASE_API_KEY = process.env.FIREBASE_WEB_API_KEY;
 
@@ -16,27 +17,43 @@ const login = async (email, password) => {
 
         const { localId, displayName, email: userEmail, idToken, photoUrl } = response.data;
 
-        // 🎯 RECUPERACIÓN DE PERFIL EXTENDIDO (Como en Cognito)
-        // Buscamos si tenemos un avatar personalizado guardado en nuestra DB
+        // 🎯 RECUPERACIÓN DE PERFIL EXTENDIDO
         let picture = photoUrl || '';
+        let username = displayName || userEmail.split('@')[0]; // Fallback inicial
+
         try {
             const COLLECTION_STATS = 'mvpp-estadisticas';
-            const userDoc = await db.collection(COLLECTION_STATS).doc(localId).get();
-            if (userDoc.exists && userDoc.data().picture) {
-                picture = userDoc.data().picture;
-                console.log(`ℹ️ [AUTH] Usando avatar de Firestore para ${userEmail}: ${picture}`);
+            const userData = await firestoreService.obtenerPorId(COLLECTION_STATS, localId);
+            
+            if (userData) {
+                if (userData.picture) picture = userData.picture;
+                if (userData.username) {
+                    username = userData.username;
+                    console.log(`ℹ️ [AUTH] Usando alias persistente para ${userEmail}: ${username}`);
+                }
+            } else {
+                // 🛡️ AUTO-CURACIÓN: Si el usuario existe en Firebase pero no en nuestra DB
+                await firestoreService.crear(COLLECTION_STATS, {
+                    id: localId,
+                    username: username,
+                    picture: picture || '01.png',
+                    puntos: 0,
+                    partidasJugadas: 0,
+                    respuestasCorrectas: 0
+                });
+                console.log(`✅ [AUTH] Perfil auto-generado para usuario: ${userEmail}`);
             }
         } catch (dbError) {
-            console.warn('⚠️ [AUTH] No se pudo leer el perfil de Firestore al login:', dbError.message);
+            console.warn('⚠️ [AUTH] No se pudo sincronizar el perfil con la DB:', dbError.message);
         }
 
         console.log(`✅ Login exitoso: ${userEmail} (Avatar final: ${picture || 'ninguno'})`);
 
         return {
             uid: localId,
-            username: displayName || userEmail.split('@')[0],
+            username: username,
             email: userEmail,
-            name: displayName,
+            name: username, // 🛡️ PRIVACIDAD: Nunca enviar el nombre real si tenemos un alias
             picture: picture,
             token: idToken
         };
@@ -55,7 +72,23 @@ const signUp = async (email, password, displayName) => {
             displayName
         });
 
-        // 2. Hacer login para obtener el token (necesario para disparar el email de verificación)
+        // 🎯 PERSISTENCIA INICIAL: Crear el perfil en nuestra DB inmediatamente
+        try {
+            const COLLECTION_STATS = 'mvpp-estadisticas';
+            await firestoreService.crear(COLLECTION_STATS, {
+                id: userRecord.uid,
+                username: displayName,
+                picture: '01.png',
+                puntos: 0,
+                partidasJugadas: 0,
+                respuestasCorrectas: 0
+            });
+            console.log(`✅ [AUTH] Perfil creado para nuevo usuario: ${email}`);
+        } catch (dbError) {
+            console.warn('⚠️ [AUTH] Error al crear perfil inicial:', dbError.message);
+        }
+
+        // 2. Hacer login para obtener el token
         const authData = await login(email, password);
 
         // 3. Disparar email de verificación vía REST API
@@ -162,21 +195,19 @@ const updateProfile = async (uid, updates) => {
         const userRecord = await auth.updateUser(uid, authUpdates);
         console.log(`✅ [AUTH] Firebase Auth actualizado para ${uid}`);
 
-        // 2. Actualizar en Firestore (Estadísticas/Ranking)
+        // 2. Actualizar en nuestra DB (Estadísticas/Ranking)
         try {
             const COLLECTION_STATS = 'mvpp-estadisticas';
-            const userStatsRef = db.collection(COLLECTION_STATS).doc(uid);
-
             const firestoreUpdates = {};
             if (updates.picture) firestoreUpdates.picture = updates.picture;
             if (updates.name) firestoreUpdates.username = updates.name;
 
             if (Object.keys(firestoreUpdates).length > 0) {
-                await userStatsRef.set(firestoreUpdates, { merge: true });
-                console.log(`✅ [AUTH] Firestore persistido para ${uid}`);
+                await firestoreService.actualizar(COLLECTION_STATS, uid, firestoreUpdates);
+                console.log(`✅ [AUTH] DB persistida para ${uid}`);
             }
         } catch (dbError) {
-            console.warn('⚠️ [AUTH] No se pudo persistir en Firestore (no es crítico):', dbError.message);
+            console.warn('⚠️ [AUTH] No se pudo persistir en la DB (no es crítico):', dbError.message);
         }
 
         return userRecord;
@@ -186,11 +217,63 @@ const updateProfile = async (uid, updates) => {
     }
 };
 
+const googleLogin = async (idToken) => {
+    try {
+        // 1. Verificar el token recibido del cliente
+        const decodedToken = await auth.verifyIdToken(idToken);
+        const { uid, email, name, picture: photoUrl } = decodedToken;
+
+        // 2. Sincronizar con nuestra DB (obtener alias y avatar personalizados)
+        let picture = photoUrl || '';
+        let username = name || email.split('@')[0];
+        let isNewUser = false;
+        
+        try {
+            const COLLECTION_STATS = 'mvpp-estadisticas';
+            const userData = await firestoreService.obtenerPorId(COLLECTION_STATS, uid);
+            
+            if (userData) {
+                if (userData.picture) picture = userData.picture;
+                if (userData.username) username = userData.username; 
+                console.log(`ℹ️ [AUTH] Alias recuperado de la DB para ${email}: ${username}`);
+            } else {
+                isNewUser = true;
+                await firestoreService.crear(COLLECTION_STATS, {
+                    id: uid,
+                    username: username,
+                    picture: picture,
+                    puntos: 0,
+                    partidasJugadas: 0,
+                    respuestasCorrectas: 0
+                });
+            }
+        } catch (dbError) {
+            console.warn('⚠️ [AUTH] Error sincronizando perfil Google con la DB:', dbError.message);
+        }
+
+        console.log(`✅ Google Login exitoso: ${email} (Username: ${username}, Nuevo: ${isNewUser})`);
+
+        return {
+            uid,
+            username, 
+            email,
+            name: username, // 🛡️ PRIVACIDAD: Ocultar nombre real de Google
+            picture,
+            token: idToken,
+            isNewUser
+        };
+    } catch (error) {
+        console.error('❌ Error en googleLogin:', error.message);
+        throw new Error('Error de autenticación con Google');
+    }
+};
+
 module.exports = {
     login,
     signUp,
     verifyToken,
     updateProfile,
     resendVerification,
-    sendPasswordReset
+    sendPasswordReset,
+    googleLogin
 };
