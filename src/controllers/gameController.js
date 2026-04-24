@@ -4,19 +4,21 @@ const roomService = require('../services/roomService');
 
 const generateQuestions = async (req, res) => {
     try {
-        const { tematicas, dificultad } = req.body;
+        const { tematicas, dificultad, count, isEntrenamiento } = req.body;
 
         if (!tematicas || !Array.isArray(tematicas) || tematicas.length === 0) {
             return res.status(400).json({ error: 'Se requieren temáticas (array)' });
         }
 
-        if (!dificultad) {
-            return res.status(400).json({ error: 'Se requiere dificultad' });
+        let result;
+        if (isEntrenamiento) {
+            console.log(`🏋️ Ejecutando Motor de Entrenamiento para: ${tematicas[0]}`);
+            result = await aiService.generateTrainingQuestions(tematicas[0], dificultad, count || 5);
+        } else {
+            console.log(`🎮 Ejecutando Motor Competitivo para: ${tematicas.join(', ')}`);
+            result = await aiService.generateQuestions(tematicas);
         }
 
-        const result = await aiService.generateQuestions(tematicas, dificultad);
-
-        // La respuesta del servicio ya tiene { success: true, preguntas: ... }
         res.json(result);
 
     } catch (error) {
