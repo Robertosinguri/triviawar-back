@@ -22,7 +22,8 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.3"
+    "nodemon": "^3.0.3",
+    "sharp": "^0.34.5"
   },
   "overrides": {
     "@tootallnate/once": "3.0.1"
