@@ -1,5 +1,5 @@
 // Service Worker para Trivia War PWA
-const CACHE_NAME = 'triviawar-v1';
+const CACHE_NAME = 'triviawar-v2';
 
 // Archivos a cachear al instalar (recursos estáticos principales)
 const PRECACHE_URLS = [
