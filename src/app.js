@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -15,6 +16,10 @@ app.use(helmet({
 app.use(cors());   // Permitir peticiones de otros dominios
 app.use(express.json()); // Parsear body JSON
 app.use(morgan('dev'));  // Logs de peticiones HTTP
+
+// Servir archivos estáticos (favicon, avatares, manifest, sw.js, audio)
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
 
 // Rutas base
 app.get('/', (req, res) => {
