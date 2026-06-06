@@ -36,7 +36,7 @@ const login = async (email, password) => {
                 await firestoreService.crear(COLLECTION_STATS, {
                     id: localId,
                     username: username,
-                    picture: picture || '01.png',
+                    picture: picture || '01.webp',
                     puntos: 0,
                     partidasJugadas: 0,
                     respuestasCorrectas: 0
@@ -78,7 +78,7 @@ const signUp = async (email, password, displayName) => {
             await firestoreService.crear(COLLECTION_STATS, {
                 id: userRecord.uid,
                 username: displayName,
-                picture: '01.png',
+                picture: '01.webp',
                 puntos: 0,
                 partidasJugadas: 0,
                 respuestasCorrectas: 0
