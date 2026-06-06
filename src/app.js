@@ -20,6 +20,12 @@ app.use(morgan('dev'));  // Logs de peticiones HTTP
 // Servir archivos estáticos (favicon, avatares, manifest, sw.js, audio)
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
+// Servir avatares y audio bajo /api para que API Gateway los rutee
+app.use('/dev/api/avatares', express.static(path.join(__dirname, '..', 'public', 'avatares')));
+app.use('/api/avatares', express.static(path.join(__dirname, '..', 'public', 'avatares')));
+app.use('/dev/api/audio', express.static(path.join(__dirname, '..', 'public', 'audio')));
+app.use('/api/audio', express.static(path.join(__dirname, '..', 'public', 'audio')));
+
 
 // Rutas base
 app.get('/', (req, res) => {
