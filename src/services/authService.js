@@ -233,8 +233,18 @@ const googleLogin = async (idToken) => {
             const userData = await firestoreService.obtenerPorId(COLLECTION_STATS, uid);
             
             if (userData) {
-                if (userData.picture) picture = userData.picture;
-                if (userData.username) username = userData.username; 
+                // Si Google tiene foto, SIEMPRE predomina sobre la almacenada en DB
+                // Solo usamos la foto de DB si Google no tiene una
+                if (photoUrl) {
+                    picture = photoUrl;
+                    // Mantener Firestore sincronizado con la foto de Google
+                    if (userData.picture !== photoUrl) {
+                        await firestoreService.actualizar(COLLECTION_STATS, uid, { picture: photoUrl });
+                    }
+                } else if (userData.picture) {
+                    picture = userData.picture;
+                }
+                if (userData.username) username = userData.username;
                 console.log(`ℹ️ [AUTH] Alias recuperado de la DB para ${email}: ${username}`);
             } else {
                 isNewUser = true;
