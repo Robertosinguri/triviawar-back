@@ -223,8 +223,22 @@ const googleLogin = async (idToken) => {
         const decodedToken = await auth.verifyIdToken(idToken);
         const { uid, email, name, picture: photoUrl } = decodedToken;
 
-        // 2. Sincronizar con nuestra DB (obtener alias y avatar personalizados)
-        let picture = photoUrl || '';
+        // 2. Verificar si la foto de Google es real o placeholder por tamaño de archivo
+        let isRealPhoto = false;
+        if (photoUrl) {
+            try {
+                const headRes = await axios.head(photoUrl, { timeout: 3000 });
+                const size = parseInt(headRes.headers['content-length'], 10);
+                // Los placeholders de Google pesan ~1-3 KB, fotos reales >10 KB
+                isRealPhoto = size > 5000;
+                console.log(`📸 [AUTH] Google photo: ${size} bytes → ${isRealPhoto ? 'foto REAL' : 'placeholder (ignorado)'}`);
+            } catch (e) {
+                console.warn(`⚠️ [AUTH] No se pudo verificar la foto de Google: ${e.message}`);
+            }
+        }
+
+        // 3. Sincronizar con nuestra DB (obtener alias y avatar personalizados)
+        let picture = isRealPhoto ? photoUrl : '01.webp';
         let username = name || email.split('@')[0];
         let isNewUser = false;
         
@@ -233,16 +247,26 @@ const googleLogin = async (idToken) => {
             const userData = await firestoreService.obtenerPorId(COLLECTION_STATS, uid);
             
             if (userData) {
-                // Si Google tiene foto, SIEMPRE predomina sobre la almacenada en DB
-                // Solo usamos la foto de DB si Google no tiene una
-                if (photoUrl) {
+                if (isRealPhoto) {
+                    // Google tiene foto REAL → SIEMPRE predomina, sin dudarlo
                     picture = photoUrl;
-                    // Mantener Firestore sincronizado con la foto de Google
                     if (userData.picture !== photoUrl) {
                         await firestoreService.actualizar(COLLECTION_STATS, uid, { picture: photoUrl });
                     }
-                } else if (userData.picture) {
-                    picture = userData.picture;
+                } else {
+                    // Google placeholder o sin foto → usar avatar local si lo tiene, sino default
+                    const isLocalAvatar = userData.picture && /^\d+\.(webp|png)$/.test(userData.picture);
+                    if (isLocalAvatar) {
+                        picture = userData.picture;
+                    } else if (userData.picture && userData.picture !== '01.webp') {
+                        // Reparar: placeholder viejo de Google → limpiar
+                        if (userData.picture.startsWith('http')) {
+                            picture = '01.webp';
+                            await firestoreService.actualizar(COLLECTION_STATS, uid, { picture: '01.webp' });
+                        } else {
+                            picture = userData.picture;
+                        }
+                    }
                 }
                 if (userData.username) username = userData.username;
                 console.log(`ℹ️ [AUTH] Alias recuperado de la DB para ${email}: ${username}`);
