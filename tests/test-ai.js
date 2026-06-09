@@ -40,8 +40,7 @@ async function testAIService() {
     try {
       const startTime = Date.now();
       const result = await aiService.generateQuestions(
-        testCase.tematicas,
-        testCase.dificultad,
+        testCase.tematicas
       );
       const duration = Date.now() - startTime;
 

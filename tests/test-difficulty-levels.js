@@ -14,7 +14,7 @@ async function probarNivel(dificultad) {
     console.log('='.repeat(80));
 
     try {
-        const resultado = await aiService.generateQuestions(TEMATICAS_PRUEBA, dificultad);
+        const resultado = await aiService.generateTrainingQuestions(TEMATICAS_PRUEBA[0], dificultad, 6);
 
         if (resultado.success) {
             console.log(`\n✅ Generación exitosa con: ${resultado.aiUsada}`);

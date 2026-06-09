@@ -168,7 +168,7 @@ const guardarResultado = async (userId, resultado) => {
                     partidasJugadas: (currentStats.partidasJugadas || 0) + 1,
                     ultimaPartida: new Date().toISOString()
                 };
-                await firestoreService.crear(COLLECTION_STATS, { id: userId, ...newStats });
+                await firestoreService.actualizar(COLLECTION_STATS, userId, newStats);
             }
         }
 

@@ -35,6 +35,12 @@ const startGame = async (roomCode) => {
         console.log(`🤖 Solicitando preguntas para: ${listaTematicas.join(', ')}`);
         const resultAI = await aiService.generateQuestions(listaTematicas);
 
+        if (!resultAI.success) {
+            console.error('❌ IA falló generando preguntas:', resultAI.message);
+            await roomRepository.updateRoom(roomCode, { estado: 'waiting' });
+            throw new Error(resultAI.message || 'Error generando preguntas con IA');
+        }
+
         // 4. Actualizar estado de sala
         const updates = {
             estado: 'playing',

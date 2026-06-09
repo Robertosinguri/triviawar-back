@@ -26,7 +26,7 @@ const login = async (email, password) => {
             const userData = await firestoreService.obtenerPorId(COLLECTION_STATS, localId);
             
             if (userData) {
-                if (userData.picture) picture = userData.picture;
+                picture = userData.picture || picture || '01.webp';
                 if (userData.username) {
                     username = userData.username;
                     console.log(`ℹ️ [AUTH] Usando alias persistente para ${userEmail}: ${username}`);
@@ -251,7 +251,7 @@ const googleLogin = async (idToken) => {
                 await firestoreService.crear(COLLECTION_STATS, {
                     id: uid,
                     username: username,
-                    picture: picture,
+                    picture: picture || '01.webp',
                     puntos: 0,
                     partidasJugadas: 0,
                     respuestasCorrectas: 0
