@@ -1,8 +1,42 @@
 const roomService = require('../../services/roomService');
 const gameService = require('../../services/gameService');
 const statsService = require('../../services/statsService');
+const { admin } = require('../../config/firebase');
 
 module.exports = (io, socket) => {
+
+    async function enriquecerConFotos(players) {
+        if (!players || players.length === 0) return players;
+        try {
+            const uids = players.filter(p => p.id && p.id.length > 5).map(p => p.id);
+            if (uids.length === 0) return players;
+
+            const { db } = require('../../config/firebase');
+            const statsSnap = await db.collection('mvpp-estadisticas')
+                .where('__name__', 'in', uids.slice(0, 30))
+                .get();
+            const statsPicture = {};
+            statsSnap.docs.forEach(d => {
+                const p = d.data().picture;
+                if (p && p !== '01.webp' && !p.startsWith('http')) {
+                    statsPicture[d.id] = p;
+                }
+            });
+
+            const result = await admin.auth().getUsers(uids.map(uid => ({ uid })));
+            const authPicture = {};
+            result.users.forEach(u => { authPicture[u.uid] = u.photoURL || null; });
+
+            return players.map(p => {
+                const custom = statsPicture[p.id];
+                const google = authPicture[p.id];
+                return { ...p, picture: custom || google || null };
+            });
+        } catch (e) {
+            console.warn('⚠️ No se pudieron obtener fotos:', e.message);
+            return players;
+        }
+    }
 
     // CREAR SALA
     socket.on('create_room', async (data) => {
@@ -11,7 +45,6 @@ module.exports = (io, socket) => {
             console.log(`🔌 Socket ${socket.id} (${hostName}) creando sala`);
             const newRoom = await roomService.createRoom(data);
             
-            // Vincular datos al socket para limpieza en desconexión
             socket.roomCode = newRoom.id;
             socket.userId = (data.host && data.host.id) || data.id;
 
@@ -32,7 +65,6 @@ module.exports = (io, socket) => {
 
             const updatedRoom = await roomService.joinRoom(roomCode, player);
 
-            // Vincular datos al socket para limpieza en desconexión
             socket.roomCode = roomCode;
             socket.userId = player.id;
 
@@ -53,6 +85,7 @@ module.exports = (io, socket) => {
                 const updatedRoom = await roomService.leaveRoom(socket.roomCode, socket.userId);
                 if (updatedRoom) {
                     io.to(socket.roomCode).emit('room_updated', updatedRoom);
+                    await autoFinalizarSiTodosTerminaron(io, socket.roomCode, updatedRoom);
                 } else {
                     console.log(`🗑️ Sala ${socket.roomCode} eliminada automáticamente (quedó vacía)`);
                 }
@@ -68,7 +101,6 @@ module.exports = (io, socket) => {
             const { roomCode, userId } = data;
             const updatedRoom = await roomService.leaveRoom(roomCode, userId);
 
-            // Limpiar vínculos
             socket.roomCode = null;
             socket.userId = null;
 
@@ -76,6 +108,7 @@ module.exports = (io, socket) => {
 
             if (updatedRoom) {
                 io.to(roomCode).emit('room_updated', updatedRoom);
+                await autoFinalizarSiTodosTerminaron(io, roomCode, updatedRoom);
             } else {
                 console.log(`🗑️ Sala ${roomCode} eliminada (vacía)`);
             }
@@ -109,12 +142,10 @@ module.exports = (io, socket) => {
             const { roomCode } = data;
             console.log(`🚀 Solicitud de inicio de juego para ${roomCode}`);
 
-            // Notificar que se está cargando (para mostrar spinners)
             io.to(roomCode).emit('game_loading', { message: 'Generando preguntas con IA...' });
 
             const gameData = await gameService.startGame(roomCode);
 
-            // Enviar preguntas a todos y cambiar pantalla
             io.to(roomCode).emit('game_started', gameData);
 
         } catch (error) {
@@ -128,15 +159,12 @@ module.exports = (io, socket) => {
         try {
             const { roomCode, result } = data;
             console.log(`💾 [SOCKET] save_game_result -> Room: ${roomCode} | User: ${result?.userId}`);
-            
-            // 1. Guardar resultado (asegurando que roomCode persista)
+
             const dataToSave = { ...result, roomCode };
             await statsService.guardarResultado(result.userId, dataToSave);
 
-            // 2. Obtener ranking actualizado de la sala (incluye a todos los que hayan terminado)
             const roomResults = await statsService.obtenerResultadosPorSala(roomCode);
-            
-            // 3. Calcular ranking unificado
+
             let ranking = roomResults.map(r => ({
                 userId: r.userId,
                 username: r.username || 'Jugador',
@@ -149,21 +177,114 @@ module.exports = (io, socket) => {
                 tematica: r.tematica || 'General'
             }));
 
-            // Ordenar: Mayor puntaje gana. En empate, menor tiempo gana.
             ranking.sort((a, b) => {
                 if (b.puntaje !== a.puntaje) return b.puntaje - a.puntaje;
                 return a.tiempoTotal - b.tiempoTotal;
             });
-            
+
             ranking = ranking.map((p, index) => ({ ...p, posicion: index + 1 }));
 
-            // 4. Emitir a TODOS en la sala para que actualicen su tabla
-            io.to(roomCode).emit('ranking_update', ranking);
-            console.log(`📡 Ranking emitido a sala ${roomCode} (${ranking.length} resultados)`);
+            const room = await roomService.getRoom(roomCode);
+            const roomPlayers = room && room.jugadores ? room.jugadores.map(j => {
+                const finished = roomResults.some(r => r.userId === j.id);
+                return {
+                    id: j.id,
+                    nombre: j.nombre,
+                    esHost: j.esHost || false,
+                    terminado: finished
+                };
+            }) : [];
+
+            const enrichedPlayers = await enriquecerConFotos(roomPlayers);
+            io.to(roomCode).emit('ranking_update', { ranking, roomPlayers: enrichedPlayers });
+            console.log(`📡 Ranking emitido a sala ${roomCode} (${ranking.length} resultados, ${enrichedPlayers.length} jugadores)`);
 
         } catch (error) {
             console.error('❌ Error en save_game_result:', error);
             socket.emit('error', { message: error.message });
         }
     });
+
+    // NOTIFICAR PROGRESO (sin guardar, solo broadcast del estado de jugadores)
+    socket.on('notify_progress', async (data) => {
+        try {
+            const { roomCode } = data;
+            const room = await roomService.getRoom(roomCode);
+            const roomResults = await statsService.obtenerResultadosPorSala(roomCode);
+
+            const roomPlayers = room && room.jugadores ? room.jugadores.map(j => {
+                const finished = roomResults.some(r => r.userId === j.id);
+                return {
+                    id: j.id,
+                    nombre: j.nombre,
+                    esHost: j.esHost || false,
+                    terminado: finished
+                };
+            }) : [];
+
+            let ranking = roomResults.map(r => ({
+                userId: r.userId,
+                username: r.username || 'Jugador',
+                nombre: r.username || 'Jugador',
+                puntaje: r.puntaje || 0,
+                tiempoTotal: r.tiempoTotal || 0,
+                respuestasCorrectas: r.respuestasCorrectas || 0,
+                totalPreguntas: r.totalPreguntas || 0,
+                porcentaje: r.totalPreguntas > 0 ? Math.round((r.respuestasCorrectas / r.totalPreguntas) * 100) : 0,
+                tematica: r.tematica || 'General'
+            }));
+
+            ranking.sort((a, b) => {
+                if (b.puntaje !== a.puntaje) return b.puntaje - a.puntaje;
+                return a.tiempoTotal - b.tiempoTotal;
+            });
+            ranking = ranking.map((p, index) => ({ ...p, posicion: index + 1 }));
+
+            const enrichedPlayers = await enriquecerConFotos(roomPlayers);
+            io.to(roomCode).emit('ranking_update', { ranking, roomPlayers: enrichedPlayers });
+            console.log(`📡 notify_progress emitido a sala ${roomCode} (${enrichedPlayers.length} jugadores)`);
+        } catch (error) {
+            console.error('❌ Error en notify_progress:', error);
+        }
+    });
+
+    // Auto-finalizar sala si todos los jugadores restantes ya terminaron
+    async function autoFinalizarSiTodosTerminaron(io, roomCode, room) {
+        if (!room || room.estado !== 'playing') return;
+
+        try {
+            const roomResults = await statsService.obtenerResultadosPorSala(roomCode);
+            const jugadoresRestantes = room.jugadores.length;
+
+            if (jugadoresRestantes > 0 && roomResults.length >= jugadoresRestantes) {
+                let ranking = roomResults.map(r => ({
+                    userId: r.userId,
+                    username: r.username || 'Jugador',
+                    nombre: r.username || 'Jugador',
+                    puntaje: r.puntaje || 0,
+                    tiempoTotal: r.tiempoTotal || 0,
+                    respuestasCorrectas: r.respuestasCorrectas || 0,
+                    totalPreguntas: r.totalPreguntas || 0,
+                    porcentaje: r.totalPreguntas > 0 ? Math.round((r.respuestasCorrectas / r.totalPreguntas) * 100) : 0,
+                    tematica: r.tematica || 'General'
+                }));
+
+                ranking.sort((a, b) => {
+                    if (b.puntaje !== a.puntaje) return b.puntaje - a.puntaje;
+                    return a.tiempoTotal - b.tiempoTotal;
+                });
+                ranking = ranking.map((p, index) => ({ ...p, posicion: index + 1 }));
+
+                await roomService.updateRoomStatus(roomCode, 'finalizada', {
+                    ranking,
+                    ganador: ranking[0]
+                });
+
+                io.to(roomCode).emit('room_updated', { ...room, estado: 'finalizada', resultadosFinales: { ranking, ganador: ranking[0] } });
+                console.log(`✅ Sala ${roomCode} auto-finalizada tras abandono (${roomResults.length}/${jugadoresRestantes} terminados)`);
+            }
+        } catch (error) {
+            console.error('❌ Error en autoFinalizarSiTodosTerminaron:', error);
+        }
+    }
 };

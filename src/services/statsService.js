@@ -217,27 +217,38 @@ const obtenerRankingGlobal = async (limite = 50) => {
             }
         }
 
-        // Recuperar los correos (emails) desde Firebase Auth
+        // Recuperar emails y fotos de perfil desde Firebase Auth
         try {
-            const uids = rankingList
+            const allUids = rankingList
                 .filter(r => r.userId && r.userId.length > 5)
                 .map(r => ({ uid: r.userId }));
-                
-            if (uids.length > 0) {
-                const result = await admin.auth().getUsers(uids);
-                const emailMap = {};
-                result.users.forEach(u => emailMap[u.uid] = u.email);
-                
-                rankingList = rankingList.map(r => ({
-                    ...r,
-                    email: emailMap[r.userId] || 'Email no disponible'
-                }));
-            } else {
-                rankingList = rankingList.map(r => ({ ...r, email: 'Email no disponible' }));
+
+            if (allUids.length > 0) {
+                const result = await admin.auth().getUsers(allUids);
+                const userMap = {};
+                result.users.forEach(u => {
+                    userMap[u.uid] = {
+                        email: u.email,
+                        photoURL: u.photoURL || null
+                    };
+                });
+
+                rankingList = rankingList.map(r => {
+                    const auth = userMap[r.userId];
+                    return {
+                        ...r,
+                        email: r.email || auth?.email || 'Email no disponible',
+                        picture: auth?.photoURL || r.picture || null
+                    };
+                });
             }
         } catch (err) {
-            console.warn('⚠️ [RANKING] No se pudieron obtener los correos de Auth:', err.message);
-            rankingList = rankingList.map(r => ({ ...r, email: r.userId })); // Fallback
+            console.warn('⚠️ [RANKING] No se pudieron obtener datos de Auth:', err.message);
+            rankingList = rankingList.map(r => ({
+                ...r,
+                email: r.email || r.userId,
+                picture: r.picture || null
+            }));
         }
 
         return rankingList;
