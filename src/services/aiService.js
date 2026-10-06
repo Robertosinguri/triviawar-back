@@ -9,10 +9,10 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 // Modelos
 const GEMINI_MODEL      = "gemini-3.1-flash-lite-preview";
-const GROQ_MODEL_LARGE  = "llama-3.3-70b-versatile";
+const GROQ_MODEL_LARGE  = "qwen/qwen3.8-27b";
 const COHERE_MODEL      = "command-r-08-2024";
 const HF_MODEL          = "meta-llama/Llama-3.1-8B-Instruct";
-const OPENROUTER_MODEL  = "liquid/lfm-2.5-1.2b-thinking:free";
+const OPENROUTER_MODEL  = "liquid/lfm-2.5-2.6b:free";
 
 // URLs
 const GEMINI_URL      = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;

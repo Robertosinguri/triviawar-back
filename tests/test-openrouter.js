@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_MODEL = "liquid/lfm-2.5-1.2b-thinking:free";
+const OPENROUTER_MODEL = "liquid/lfm-2.5-2.6b:free";
 
 async function testOpenRouter() {
     console.log('🧪 Probando OpenRouter API...');
