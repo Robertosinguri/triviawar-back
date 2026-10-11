@@ -6,6 +6,7 @@ const statsController = require('../controllers/statsController');
 const roomController = require('../controllers/roomController');
 const dbController = require('../controllers/dbController');
 const audioController = require('../controllers/audioController');
+const encuestaController = require('../controllers/encuestaController');
 
 // Comprobar estado de Firestore y colecciones (para verificar que existen / son accesibles)
 router.get('/db/status', dbController.getDbStatus);
@@ -36,5 +37,13 @@ router.get('/rooms/:code', roomController.getRoom);
 // Rutas de Audio
 router.get('/audio/list', audioController.listAudioFiles);
 router.get('/audio/:filename', audioController.getAudio);
+
+// Rutas de la Encuesta de bienvenida
+// submit: guarda la respuesta (idempotente, un documento por dispositivo)
+// vincular: enriquece la respuesta anónima con la cuenta real tras el login
+router.post('/encuesta/submit', encuestaController.submit);
+router.post('/encuesta/vincular', encuestaController.vincular);
+// Panel de resultados: protegido con la clave de acceso (header x-clave-acceso)
+router.get('/encuesta/estadisticas', encuestaController.estadisticas);
 
 module.exports = router;
