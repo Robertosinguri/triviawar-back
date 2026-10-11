@@ -3,6 +3,10 @@ name: CI/CD Pipeline - TriviaWar Backend
 on:
   push:
     branches: [ "main" ]
+  # Permite dispararlo a mano desde la pestaña "Actions", sin necesidad de
+  # inventar un commit vacío. Es lo que hay que usar cuando cambia el secreto
+  # ENV_FILE_CONTENT (editar el secreto NO re-ejecuta el deploy solo).
+  workflow_dispatch:
 
 jobs:
   # 1. TRABAJO DE CONSTRUCCIÓN Y EMPUJE A GHCR
