@@ -1,8 +1,19 @@
 name: CI/CD AWS - TriviaWar Backend
 
+# DESACTIVADO A PROPÓSITO.
+#
+# La cuenta de AWS ya no está activa, así que no tiene sentido que corra (y que
+# deje una cruz roja en cada push). El archivo queda entero por si más adelante
+# se reutiliza, por ejemplo en una VM de Oracle:
+#
+#   - Para correrlo a mano: pestaña "Actions" -> "CI/CD AWS - TriviaWar Backend"
+#     -> botón "Run workflow".
+#   - Para que vuelva a dispararse solo en cada push a main: descomentá las dos
+#     líneas del `push` y borrá el `workflow_dispatch`.
 on:
-  push:
-    branches: [ "main" ]
+  # push:
+  #   branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
   # 1. Construir y subir imagen a GHCR (reutilizamos la lógica principal)
