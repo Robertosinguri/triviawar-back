@@ -225,7 +225,8 @@ const vincular = async (req, res) => {
         const resultado = await encuestaService.vincularRespuesta({
             deviceId: limpiarTexto(cuerpo.deviceId, 120),
             uidAnonimo: limpiarTexto(cuerpo.uidAnonimo, 120),
-            idToken
+            idToken,
+            ip
         });
 
         return res.json({ success: true, ...resultado });

@@ -18,6 +18,16 @@ const admin = require('firebase-admin');
 const COLECCION = 'mvpp-encuestas';
 const ESTADOS_VALIDOS = ['completada', 'excluida', 'aplazada'];
 
+/**
+ * Estado interno, no lo manda nunca el cliente.
+ *
+ * Marca las respuestas de alguien que ya había respondido antes con la misma
+ * cuenta o el mismo correo. Se conservan (son la evidencia de que esa persona
+ * volvió a responder) pero quedan FUERA de la muestra válida: no entran en
+ * ningún porcentaje, para no contar dos veces a la misma persona.
+ */
+const ESTADO_DUPLICADA = 'duplicada';
+
 /** Segundos mínimos de llenado: por debajo de esto se marca como sospechosa. */
 const SEGUNDOS_MINIMOS = 8;
 
@@ -187,6 +197,9 @@ const guardarRespuesta = async (datos) => {
         uidReal: uidReal || token?.uid || previo?.uidReal || null,
 
         email: emailDelToken || previo?.email || null,
+        // Versión normalizada del correo: es la clave con la que después se
+        // detecta si la misma persona respondió desde otro dispositivo.
+        emailClave: (emailDelToken || previo?.email || '').toString().trim().toLowerCase() || null,
         // Solo cuenta como verificado si el token lo dice (Google siempre marca
         // email_verified; email/contraseña no, hasta que confirma el correo).
         emailVerificado: token?.email_verified === true || Boolean(previo?.emailVerificado),
@@ -252,7 +265,58 @@ const guardarRespuesta = async (datos) => {
  * @param {object} datos - { deviceId, uidAnonimo, idToken }
  * @returns {Promise<{vinculada: boolean, id: string|null}>}
  */
-const vincularRespuesta = async ({ deviceId, uidAnonimo, idToken }) => {
+/**
+ * Todas las respuestas de la misma persona (por cuenta o por correo), sin contar
+ * la que se está vinculando. La identidad se resuelve por la cuenta real (uid) o
+ * por el correo: cualquiera de las dos alcanza para saber que es la misma persona.
+ */
+const buscarCandidatos = async ({ id, uid, emailClave }) => {
+    const encontrados = new Map();
+
+    const sumar = (snapshot) => {
+        for (const doc of snapshot.docs) {
+            if (doc.id !== id) encontrados.set(doc.id, { id: doc.id, ...doc.data() });
+        }
+    };
+
+    sumar(await db.collection(COLECCION).where('uidReal', '==', uid).limit(10).get());
+    if (emailClave) {
+        sumar(await db.collection(COLECCION).where('emailClave', '==', emailClave).limit(10).get());
+    }
+
+    return [...encontrados.values()];
+};
+
+/** Fecha de creación en milisegundos (para quedarse siempre con la más antigua). */
+const fechaDe = (doc) => {
+    const iso = aIso(doc.creadoEn);
+    const marca = iso ? Date.parse(iso) : NaN;
+    // Una fecha desconocida nunca debería ganarle a una conocida.
+    return Number.isNaN(marca) ? Number.POSITIVE_INFINITY : marca;
+};
+
+/**
+ * Marca una respuesta como duplicada. No se borra ni se vacía: se conserva
+ * entera como evidencia, pero queda fuera de todas las estadísticas.
+ */
+const marcarDuplicada = async (id, duplicadoDe, ip) => {
+    await db.collection(COLECCION).doc(id).set(
+        {
+            estado: ESTADO_DUPLICADA,
+            duplicadoDe,
+            historial: admin.firestore.FieldValue.arrayUnion({
+                estado: ESTADO_DUPLICADA,
+                fecha: new Date().toISOString(),
+                ip: ip || null
+            })
+        },
+        { merge: true }
+    );
+
+    console.log(`🚫 [Encuesta] ${id} marcada como duplicada de ${duplicadoDe}`);
+};
+
+const vincularRespuesta = async ({ deviceId, uidAnonimo, idToken, ip = null }) => {
     const token = await verificarToken(idToken);
     if (!token) {
         const error = new Error('Se requiere un ID token válido para vincular la respuesta');
@@ -280,21 +344,81 @@ const vincularRespuesta = async ({ deviceId, uidAnonimo, idToken }) => {
         return { vinculada: false, id: null };
     }
 
+    const previo = existente.data() || {};
+    const correo = (token.email || previo.email || '').toString().trim();
+
+    const identidad = {
+        uidReal: token.uid,
+        email: correo || null,
+        emailClave: correo ? correo.toLowerCase() : null,
+        emailVerificado: token.email_verified === true,
+        nombre: token.name || previo.nombre || null,
+        foto: token.picture || previo.foto || null,
+        vinculadaEn: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    // Ya se había resuelto antes: no se vuelve a analizar ni a marcar.
+    if (previo.estado === ESTADO_DUPLICADA) {
+        return { vinculada: true, id, duplicada: true, duplicadoDe: previo.duplicadoDe || null };
+    }
+
+    // Todas las respuestas de esta misma persona (por cuenta o por correo).
+    const candidatos = await buscarCandidatos({
+        id,
+        uid: token.uid,
+        emailClave: identidad.emailClave
+    });
+
+    // Gana siempre LA PRIMERA respuesta: entre las completadas de esta persona se
+    // elige la más antigua, sin importar en qué dispositivo se haya logueado antes.
+    // Las demás quedan como evidencia pero no suman en ninguna estadística.
+    const completadas = [...candidatos, { id, ...previo }]
+        .filter((doc) => doc.estado === 'completada')
+        .sort((a, b) => fechaDe(a) - fechaDe(b));
+    const primera = completadas[0] || null;
+
+    // Nadie de esta persona respondió todavía: esta es la que cuenta.
+    if (!primera || primera.id === id) {
+        await referencia.set(identidad, { merge: true });
+
+        for (const otra of completadas.slice(1)) {
+            await marcarDuplicada(otra.id, id, ip);
+        }
+
+        console.log(
+            `🔗 [Encuesta] Respuesta ${id} vinculada a la cuenta ${token.uid} (${correo || 'sin email'})`
+        );
+
+        return { vinculada: true, id, duplicada: false, duplicadoDe: null };
+    }
+
+    // Ya había respondido antes desde otro dispositivo: esta queda fuera y, si
+    // todavía no tenía la identidad, se la lleva la primera respuesta.
     await referencia.set(
         {
-            uidReal: token.uid,
-            email: token.email || existente.data()?.email || null,
-            emailVerificado: token.email_verified === true,
-            nombre: token.name || existente.data()?.nombre || null,
-            foto: token.picture || existente.data()?.foto || null,
-            vinculadaEn: admin.firestore.FieldValue.serverTimestamp()
+            ...identidad,
+            estado: ESTADO_DUPLICADA,
+            duplicadoDe: primera.id,
+            historial: admin.firestore.FieldValue.arrayUnion({
+                estado: ESTADO_DUPLICADA,
+                fecha: new Date().toISOString(),
+                ip: ip || null
+            })
         },
         { merge: true }
     );
 
-    console.log(`🔗 [Encuesta] Respuesta ${id} vinculada a la cuenta ${token.uid} (${token.email || 'sin email'})`);
+    await db.collection(COLECCION).doc(primera.id).set(identidad, { merge: true });
 
-    return { vinculada: true, id };
+    for (const otra of completadas.slice(1)) {
+        if (otra.id !== id) await marcarDuplicada(otra.id, primera.id, ip);
+    }
+
+    console.log(
+        `🚫 [Encuesta] ${id} marcada como duplicada de ${primera.id} (${identidad.email || token.uid})`
+    );
+
+    return { vinculada: true, id, duplicada: true, duplicadoDe: primera.id };
 };
 
 /** Lee el estado de la encuesta para un dispositivo (útil para diagnóstico). */
@@ -347,7 +471,7 @@ const obtenerPanelEstadisticas = async () => {
     const total = documentos.length;
 
     // --- Ficha técnica: cuántos completaron, cuántos cayeron en el filtro y cuántos se fueron
-    const porEstado = { completada: 0, excluida: 0, aplazada: 0, otros: 0 };
+    const porEstado = { completada: 0, excluida: 0, aplazada: 0, duplicada: 0, otros: 0 };
     for (const doc of documentos) {
         if (Object.prototype.hasOwnProperty.call(porEstado, doc.estado)) {
             porEstado[doc.estado] += 1;
@@ -359,6 +483,8 @@ const obtenerPanelEstadisticas = async () => {
     const completadas = documentos.filter((doc) => doc.estado === 'completada');
     const excluidas = documentos.filter((doc) => doc.estado === 'excluida');
     const aplazadas = documentos.filter((doc) => doc.estado === 'aplazada');
+    // Duplicadas: la misma persona ya había respondido con esa cuenta o ese correo.
+    const duplicadas = documentos.filter((doc) => doc.estado === ESTADO_DUPLICADA);
 
     // --- Identidad: cuántas respuestas de la muestra válida están respaldadas por una cuenta real
     const conCorreo = completadas.filter((doc) => Boolean(doc.email)).length;
@@ -447,6 +573,8 @@ const obtenerPanelEstadisticas = async () => {
                 abrioEn: aIso(doc.contexto?.abrioEn)
             },
             intentosDeCambio: Number(doc.intentosDeCambio) || 0,
+            // Si esta fila es un duplicado, acá está el id del registro que sí cuenta.
+            duplicadoDe: doc.duplicadoDe || null,
             sospechosa: doc.sospechosa === true,
             senalesDeRiesgo: Array.isArray(doc.senalesDeRiesgo) ? doc.senalesDeRiesgo : []
         }))
@@ -463,9 +591,14 @@ const obtenerPanelEstadisticas = async () => {
             valida: completadas.length,
             descartadas: excluidas.length,
             abandonos: aplazadas.length,
-            // De todos los que abrieron la encuesta, cuántos llegaron al final del flujo.
+            duplicadas: duplicadas.length,
+            // De todos los que abrieron la encuesta, cuántos llegaron al final del
+            // flujo. Los duplicados también lo completaron, aunque después se
+            // descarten: acá se mide el flujo, no la muestra.
             tasaFinalizacion: total
-                ? redondear(((completadas.length + excluidas.length) / total) * 100)
+                ? redondear(
+                      ((completadas.length + excluidas.length + duplicadas.length) / total) * 100
+                  )
                 : 0
         },
         identidad: {
