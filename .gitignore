@@ -2,6 +2,7 @@ node_modules/
 .env
 .env.txt
 *.log
+logs/
 service-account.json
 
 # Security & Keys

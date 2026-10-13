@@ -37,8 +37,11 @@ const startGame = async (roomCode) => {
 
         if (!resultAI.success) {
             console.error('❌ IA falló generando preguntas:', resultAI.message);
-            await roomRepository.updateRoom(roomCode, { estado: 'waiting' });
-            throw new Error(resultAI.message || 'Error generando preguntas con IA');
+            // La sala vuelve a 'esperando' para que los jugadores puedan reintentar
+            // (antes quedaba en 'waiting', un estado que el resto del sistema no
+            //  reconoce: la sala desaparecía del listado y ya no se podía usar).
+            await roomRepository.updateRoom(roomCode, { estado: 'esperando', preguntasActuales: null });
+            throw new Error('No se pudieron generar las preguntas. Intenta de nuevo en unos segundos.');
         }
 
         // 4. Actualizar estado de sala
@@ -63,6 +66,17 @@ const startGame = async (roomCode) => {
 
     } catch (error) {
         console.error('❌ Error iniciando juego:', error);
+        // Si algo falla después de marcar la sala como 'generating', la devolvemos
+        // a 'esperando' para que no quede bloqueada (antes quedaba inutilizable).
+        try {
+            const salaActual = await roomRepository.getRoom(roomCode);
+            if (salaActual && salaActual.estado === 'generating') {
+                await roomRepository.updateRoom(roomCode, { estado: 'esperando' });
+                console.warn(`↩️ Sala ${roomCode} devuelta a 'esperando' tras el error.`);
+            }
+        } catch (e2) {
+            console.error('⚠️ No se pudo revertir el estado de la sala:', e2.message);
+        }
         throw error;
     }
 };

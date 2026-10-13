@@ -1,3 +1,5 @@
+const { registrarInvalida } = require('../utils/iaAuditoria');
+
 // ============================================================
 // CONFIGURACIÓN DE APIs
 // ============================================================
@@ -64,7 +66,9 @@ ${DIFFICULTY_TAXONOMY}
 REGLAS DE FORMATO:
 - Salida: ÚNICAMENTE el array JSON, sin texto adicional, sin markdown, sin explicaciones.
 - Campo "dificultad": exactamente 'baby', 'conocedor' o 'killer'.
-- Campo "respuestaCorrecta": el índice exacto (0-3) de la opción correcta dentro del array "opciones".`;
+- Campo "respuestaCorrecta": el índice exacto (0-3) de la opción correcta dentro del array "opciones".
+- Campo "respuestaCorrectaTexto": el texto EXACTO de esa misma opción, copiado carácter por carácter desde "opciones". DEBE coincidir siempre con "opciones[respuestaCorrecta]".
+- Varía la posición de la respuesta correcta entre las 4 opciones: NO pongas siempre la correcta en la primera posición.`;
 
 const SYSTEM_INSTRUCTION_TRAINING = `Eres un Entrenador de Trivia Especializado con criterio de dificultad muy preciso.
 Tu misión: generar un desafío de entrenamiento de EXACTAMENTE 5 preguntas.
@@ -74,7 +78,9 @@ REGLAS ABSOLUTAS:
 - Genera EXACTAMENTE 5 preguntas. Ni más, ni menos.
 - TODAS las preguntas deben ser del nivel de dificultad solicitado.
 - Salida: ÚNICAMENTE el array JSON puro. Sin texto adicional.
-- Campo "respuestaCorrecta": el índice exacto (0-3).`;
+- Campo "respuestaCorrecta": el índice exacto (0-3) de la opción correcta.
+- Campo "respuestaCorrectaTexto": el texto EXACTO de esa opción (copia carácter por carácter una de las "opciones").
+- Varía la posición de la respuesta correcta entre las 4 opciones.`;
 
 // ============================================================
 // HELPERS DE PROMPT
@@ -97,6 +103,7 @@ FORMATO JSON OBLIGATORIO:
     "pregunta": "texto de la pregunta",
     "opciones": ["opción A", "opción B", "opción C", "opción D"],
     "respuestaCorrecta": 0,
+    "respuestaCorrectaTexto": "opción A",
     "tematica": "nombre del tema",
     "dificultad": "baby"
   }
@@ -121,6 +128,7 @@ FORMATO JSON:
     "pregunta": "texto de la pregunta",
     "opciones": ["opción A", "opción B", "opción C", "opción D"],
     "respuestaCorrecta": 0,
+    "respuestaCorrectaTexto": "opción A",
     "tematica": "${tematica}",
     "dificultad": "${dificultad}"
   }
@@ -161,30 +169,215 @@ const fetchWithTimeout = async (url, options, timeoutMs = 15000) => {
   }
 };
 
-const normalizeQuestions = (preguntasRaw, tematicas) => {
+// ============================================================
+// VALIDACIÓN + NORMALIZACIÓN DE PREGUNTAS
+// ============================================================
+// Regla de oro: acá NO se "adivina" la respuesta correcta.
+// Si la IA devuelve un dato incoherente, la pregunta se DESCARTA y se registra
+// en logs/ia-respuestas-invalidas.jsonl, en lugar de convertirse en silencio en
+// "la opción A es la correcta" (eso era lo que rompía el feedback de la arena).
+
+const DIFICULTADES_VALIDAS = ['baby', 'conocedor', 'killer'];
+
+// Sinónimos aceptados: la IA a veces responde el nivel en español.
+const SINONIMOS_DIFICULTAD = {
+  asesino: 'killer',
+  experto: 'conocedor',
+  facil: 'baby',
+  'fácil': 'baby',
+  medio: 'conocedor',
+  dificil: 'killer',
+  'difícil': 'killer'
+};
+
+const extraerArrayDePreguntas = (preguntasRaw) => {
   let data = preguntasRaw;
   if (!Array.isArray(data)) {
     const keys = ["preguntas", "questions", "items", "trivia", "data"];
     for (const key of keys) {
-      if (data[key] && Array.isArray(data[key])) { data = data[key]; break; }
+      if (data && data[key] && Array.isArray(data[key])) { data = data[key]; break; }
     }
   }
   if (!Array.isArray(data) && typeof data === "object" && data !== null) {
-    data = Object.values(data).filter((item) => typeof item === "object");
+    data = Object.values(data).filter((item) => typeof item === "object" && item !== null);
   }
   if (!Array.isArray(data)) data = [data];
+  return data;
+};
 
-  return data.map((p) => {
-    const opciones = p.opciones || p.options || p.choices || ["A", "B", "C", "D"];
-    const correct = p.respuestaCorrecta ?? p.answer ?? p.correctIndex ?? 0;
-    return {
-      pregunta: p.pregunta || p.question || "Pregunta sin texto",
-      opciones: Array.isArray(opciones) ? opciones.slice(0, 4) : ["A", "B", "C", "D"],
-      respuestaCorrecta: Number.isInteger(Number(correct)) ? Number(correct) % 4 : 0,
-      tematica: p.tematica || p.category || p.topic || tematicas[0] || "General",
-      dificultad: p.dificultad || 'conocedor'
-    };
+const normalizarTexto = (valor) => typeof valor === 'string'
+  ? valor.trim().toLowerCase().replace(/\s+/g, ' ')
+  : valor;
+
+// Busca el texto indicado entre las opciones (tolerante a mayúsculas y espacios)
+const buscarOpcionPorTexto = (opciones, texto) => {
+  if (typeof texto !== 'string' || !texto.trim()) return -1;
+  return opciones.findIndex((o) => normalizarTexto(o) === normalizarTexto(texto));
+};
+
+// La IA a veces copia el ejemplo del prompt en lugar de responder; en ese caso
+// el texto no aporta información y se usa el índice.
+const PLACEHOLDERS_RESPUESTA = new Set([
+  'a', 'opcion a', 'opción a', 'opcion correcta', 'opción correcta',
+  'texto de la opcion correcta', 'texto de la opción correcta',
+  'texto exacto de la opcion correcta', 'texto exacto de la opción correcta',
+  'texto de la respuesta correcta', 'respuesta correcta', 'correcta'
+]);
+
+const esPlaceholderRespuesta = (texto) => typeof texto === 'string' && PLACEHOLDERS_RESPUESTA.has(normalizarTexto(texto));
+
+/**
+ * Resuelve el índice de la respuesta correcta.
+ * Prioridad: el TEXTO (es lo que el modelo "razona"); si no viene, el índice
+ * numérico; y si el índice llegó como texto, se busca ese texto entre opciones.
+ * Nunca devuelve un índice "por defecto".
+ */
+const resolverIndiceCorrecto = (p, opciones) => {
+  const textoRespuesta = p.respuestaCorrectaTexto ?? p.respuestaTexto ?? p.correctAnswer ?? p.answerText;
+  const indiceRaw = p.respuestaCorrecta ?? p.answer ?? p.correctIndex;
+  const textoUtil = typeof textoRespuesta === 'string' && textoRespuesta.trim() && !esPlaceholderRespuesta(textoRespuesta);
+
+  if (textoUtil) {
+    const pos = buscarOpcionPorTexto(opciones, textoRespuesta);
+    if (pos >= 0) return { indice: pos, origen: 'texto' };
+    // El texto no coincide con ninguna opción y el índice declarado no es
+    // confiable (la IA suele repetir el "0" del ejemplo del prompt): no adivinamos.
+    return { indice: null, motivo: `"respuestaCorrectaTexto" ("${textoRespuesta}") no coincide con ninguna de las opciones` };
+  }
+
+  if (Number.isInteger(indiceRaw)) {
+    if (indiceRaw >= 0 && indiceRaw < opciones.length) return { indice: indiceRaw, origen: 'indice' };
+    return { indice: null, motivo: `"respuestaCorrecta" fuera de rango: ${indiceRaw}` };
+  }
+
+  if (typeof indiceRaw === 'string' && indiceRaw.trim()) {
+    const pos = buscarOpcionPorTexto(opciones, indiceRaw);
+    if (pos >= 0) return { indice: pos, origen: 'texto en "respuestaCorrecta"' };
+    return { indice: null, motivo: `"respuestaCorrecta" no es un índice (0-3) ni coincide con una opción: "${indiceRaw}"` };
+  }
+
+  return { indice: null, motivo: `"respuestaCorrecta" ausente o con tipo inválido: ${JSON.stringify(indiceRaw)}` };
+};
+
+/**
+ * Normaliza y valida UNA pregunta cruda de la IA.
+ * @returns {{ pregunta?: object, motivos?: string[], advertencias?: string[] }}
+ *          Si hay "motivos", la pregunta NO es utilizable.
+ */
+const normalizarPregunta = (p, tematicas) => {
+  if (!p || typeof p !== 'object') {
+    return { motivos: [`la pregunta no es un objeto: ${JSON.stringify(p)}`] };
+  }
+
+  const motivos = [];
+  const advertencias = [];
+
+  const opcionesRaw = p.opciones ?? p.options ?? p.choices;
+  const opciones = Array.isArray(opcionesRaw) ? opcionesRaw : null;
+
+  if (!opciones) {
+    motivos.push('el campo "opciones" no es un array');
+  } else {
+    if (opciones.length !== 4) motivos.push(`se esperaban 4 opciones y llegaron ${opciones.length}`);
+    if (opciones.some((o) => typeof o !== 'string' || !o.trim())) motivos.push('hay opciones vacías o que no son texto');
+    const normalizadas = opciones.map((o) => normalizarTexto(o));
+    if (new Set(normalizadas).size !== normalizadas.length) motivos.push('hay opciones repetidas');
+  }
+
+  const textoPregunta = (typeof p.pregunta === 'string' && p.pregunta.trim()) ? p.pregunta : p.question;
+  if (typeof textoPregunta !== 'string' || !textoPregunta.trim()) motivos.push('la pregunta no tiene texto');
+
+  let dificultad = p.dificultad ?? p.difficulty;
+  if (typeof dificultad === 'string') {
+    const normal = normalizarTexto(dificultad);
+    if (DIFICULTADES_VALIDAS.includes(normal)) {
+      dificultad = normal;
+    } else if (SINONIMOS_DIFICULTAD[normal]) {
+      advertencias.push(`dificultad "${dificultad}" interpretada como "${SINONIMOS_DIFICULTAD[normal]}"`);
+      dificultad = SINONIMOS_DIFICULTAD[normal];
+    } else {
+      motivos.push(`dificultad inválida: ${JSON.stringify(dificultad)}`);
+    }
+  } else {
+    motivos.push(`dificultad ausente o con tipo inválido: ${JSON.stringify(dificultad)}`);
+  }
+
+  const tematica = p.tematica ?? p.category ?? p.topic ?? tematicas[0] ?? 'General';
+  if (Array.isArray(tematicas) && tematicas.length && !tematicas.includes(tematica)) {
+    advertencias.push(`temática no pedida: ${JSON.stringify(tematica)}`);
+  }
+
+  let indice = null;
+  let origenRespuesta = null;
+  const opcionesLimpias = opciones ? opciones.map((o) => String(o).trim()) : null;
+
+  if (opcionesLimpias && motivos.length === 0) {
+    const resolucion = resolverIndiceCorrecto(p, opcionesLimpias);
+    if (resolucion.indice === null) motivos.push(resolucion.motivo);
+    else {
+      indice = resolucion.indice;
+      origenRespuesta = resolucion.origen;
+    }
+  }
+
+  if (motivos.length) return { motivos, advertencias };
+
+  return {
+    pregunta: {
+      pregunta: String(textoPregunta).trim(),
+      opciones: opcionesLimpias,
+      respuestaCorrecta: indice,
+      respuestaCorrectaTexto: opcionesLimpias[indice],
+      tematica,
+      dificultad
+    },
+    origenRespuesta,
+    advertencias
+  };
+};
+
+/**
+ * Procesa la respuesta cruda de la IA y separa lo utilizable de lo descartado.
+ * @returns {{ validas: object[], invalidas: object[], advertencias: object[], total: number }}
+ */
+const prepararPreguntas = (preguntasRaw, tematicas) => {
+  const items = extraerArrayDePreguntas(preguntasRaw);
+  const validas = [];
+  const invalidas = [];
+  const advertencias = [];
+
+  items.forEach((p, i) => {
+    const r = normalizarPregunta(p, tematicas);
+    if (r.motivos && r.motivos.length) {
+      invalidas.push({ indice: i, motivos: r.motivos, crudo: p });
+    } else {
+      validas.push(r.pregunta);
+      if (r.advertencias && r.advertencias.length) advertencias.push({ indice: i, advertencias: r.advertencias });
+    }
   });
+
+  return { validas, invalidas, advertencias, total: items.length };
+};
+
+/**
+ * Baraja las opciones de una pregunta manteniendo el índice coherente.
+ * El índice se recalcula buscando el TEXTO de la respuesta correcta, así que es
+ * imposible que quede apuntando a otra opción.
+ * Elimina el sesgo "la respuesta correcta siempre es la A".
+ */
+const barajarOpciones = (pregunta) => {
+  const opciones = pregunta.opciones.slice();
+  const textoCorrecto = opciones[pregunta.respuestaCorrecta];
+  for (let i = opciones.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [opciones[i], opciones[j]] = [opciones[j], opciones[i]];
+  }
+  return {
+    ...pregunta,
+    opciones,
+    respuestaCorrecta: opciones.indexOf(textoCorrecto),
+    respuestaCorrectaTexto: textoCorrecto
+  };
 };
 
 const cleanJsonResponse = (text) => {
@@ -330,13 +523,31 @@ const runWithFallbacks = async (sysInstruction, prompt, tematicas, temperature =
       console.log(`🔄 [${plan.name}] Intentando con ${plan.label}...`);
       const { text, duration } = await plan.fn();
       const parsed = JSON.parse(cleanJsonResponse(text));
-      const preguntas = normalizeQuestions(parsed, tematicas);
+      const { validas, invalidas, advertencias, total } = prepararPreguntas(parsed, tematicas);
 
-      // Validación de conteo si se especificó
-      if (expectedCount && preguntas.length !== expectedCount) {
-        console.warn(`⚠️ [${plan.name}] Se esperaban ${expectedCount} preguntas, se recibieron ${preguntas.length}. Intentando siguiente...`);
+      // Advertencias: no descartan la pregunta, pero quedan registradas
+      advertencias.forEach((a) => {
+        console.warn(`⚠️ [${plan.name}] Pregunta ${a.indice + 1}: ${a.advertencias.join(' | ')}`);
+      });
+
+      // Validación de CONTENIDO: si alguna pregunta no cumple el contrato se
+      // descarta la respuesta completa y se prueba con el siguiente motor.
+      // (Antes solo se validaba la cantidad y el índice inválido se convertía en "A").
+      if (invalidas.length > 0) {
+        console.warn(`⚠️ [${plan.name}] ${invalidas.length} de ${total} preguntas descartadas por formato inválido:`);
+        invalidas.forEach((i) => console.warn(`   • Pregunta ${i.indice + 1}: ${i.motivos.join(' | ')}`));
+        registrarInvalida({ plan: plan.name, motor: plan.label, tematicas, invalidas, crudo: parsed });
         continue;
       }
+
+      // Validación de conteo si se especificó
+      if (expectedCount && validas.length !== expectedCount) {
+        console.warn(`⚠️ [${plan.name}] Se esperaban ${expectedCount} preguntas, se recibieron ${validas.length}. Intentando siguiente...`);
+        continue;
+      }
+
+      // Barajado: la opción correcta ya no queda siempre en la posición A
+      const preguntas = validas.map(barajarOpciones);
 
       logAIResult(plan.name, plan.label, true, duration, preguntas.length);
       return {
@@ -402,5 +613,9 @@ const generateTrainingQuestions = async (tematica, dificultad, count = 5) => {
 
 module.exports = {
   generateQuestions,
-  generateTrainingQuestions
+  generateTrainingQuestions,
+  // Exportadas para los tests deterministas y el script de verificación
+  prepararPreguntas,
+  barajarOpciones,
+  resolverIndiceCorrecto
 };
