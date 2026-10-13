@@ -1,5 +1,8 @@
 const roomRepository = require('../repositories/roomRepository');
 
+// Una sala en espera sin actividad durante este tiempo se considera abandonada.
+const TTL_ESPERANDO_MS = 5 * 60 * 1000;
+
 const createRoom = async (data) => {
     // data puede ser { id, nombre... } (legacy) o { host: {id...}, maxJugadores, nombre } (nuevo)
     const host = data.host || data;
@@ -19,6 +22,7 @@ const createRoom = async (data) => {
         id: roomCode,
         roomCode,
         fechaCreacion: new Date().toISOString(),
+        ultimaActividad: new Date().toISOString(),
         estado: 'esperando',
         nombre: data.nombre || `${host.nombre}'s Game`,
         jugadores: [hostPlayer],
@@ -37,13 +41,22 @@ const joinRoom = async (roomCode, playerParams) => {
     console.log('🔍 [DEBUG] joinRoom fetch:', JSON.stringify(room, null, 2)); // DEBUG LOG
     if (!room) throw new Error('Sala no encontrada');
     if (room.estado !== 'esperando') {
-        console.error(`❌ Estado inválido: ${room.estado} (esperaba: esperando)`);
-        throw new Error('La partida ya ha comenzado');
+        // Compatibilidad: las salas que quedaron en el estado inválido 'waiting'
+        // (bug viejo cuando la IA fallaba) se recuperan al intentar entrar.
+        if (room.estado === 'waiting') {
+            console.warn(`♻️ Sala ${roomCode} estaba en estado inválido 'waiting'. Se recupera como 'esperando'.`);
+            room.estado = 'esperando';
+            await roomRepository.updateRoom(roomCode, { estado: 'esperando' });
+        } else {
+            console.error(`❌ Estado inválido: ${room.estado} (esperaba: esperando)`);
+            throw new Error('La partida ya ha comenzado');
+        }
     }
     const playerExists = room.jugadores.find(p => p.id === playerParams.id);
     if (playerExists) {
         // Si ya existe, actualizamos sus datos (reconexión simple)
         // Y permitimos entrar incluso si está "llena" (porque él ya ocupa un lugar)
+        await roomRepository.updateRoom(roomCode, { ultimaActividad: new Date().toISOString() });
         return room;
     }
 
@@ -60,7 +73,10 @@ const joinRoom = async (roomCode, playerParams) => {
     room.jugadores.push(newPlayer);
 
     // Actualizamos toda la lista de jugadores
-    await roomRepository.updateRoom(roomCode, { jugadores: room.jugadores });
+    await roomRepository.updateRoom(roomCode, {
+        jugadores: room.jugadores,
+        ultimaActividad: new Date().toISOString()
+    });
 
     return room;
 };
@@ -85,7 +101,10 @@ const leaveRoom = async (roomCode, playerId) => {
         await roomRepository.deleteRoom(roomCode);
         return null;
     } else {
-        await roomRepository.updateRoom(roomCode, { jugadores: room.jugadores });
+        await roomRepository.updateRoom(roomCode, {
+            jugadores: room.jugadores,
+            ultimaActividad: new Date().toISOString()
+        });
         return room;
     }
 };
@@ -107,20 +126,48 @@ const updatePlayerConfig = async (roomCode, userId, config) => {
     player.tematica = config.tematica || '';
     player.configurado = config.configurado;
 
-    await roomRepository.updateRoom(roomCode, { jugadores: room.jugadores });
+    await roomRepository.updateRoom(roomCode, {
+        jugadores: room.jugadores,
+        ultimaActividad: new Date().toISOString()
+    });
+    return room;
+};
+
+// Marca la sala como activa (se usa en heartbeat y otras acciones)
+const touchRoom = async (roomCode) => {
+    const room = await roomRepository.getRoom(roomCode);
+    if (!room) return null;
+    await roomRepository.updateRoom(roomCode, { ultimaActividad: new Date().toISOString() });
     return room;
 };
 
 const getActiveRooms = async () => {
     const allRooms = await roomRepository.getAllRooms();
     console.log(`🔍 [DEBUG] getActiveRooms - Total en DB: ${allRooms.length}`);
-    
-    // Retornamos solo salas en espera que tengan cupo y NOMBRE
-    const filtered = allRooms.filter(r => 
-        r.estado === 'esperando' && 
-        (r.jugadores || []).length < (r.maxJugadores || 4) &&
-        r.nombre && r.nombre.trim() !== ''
-    );
+
+    const ahora = Date.now();
+    const filtered = [];
+
+    for (const r of allRooms) {
+        if (r.estado !== 'esperando') continue;
+
+        // Limpieza de salas abandonadas: si nadie las toca en TTL_ESPERANDO_MS, se eliminan.
+        const ultima = Date.parse(r.ultimaActividad || r.fechaCreacion || '');
+        if (!Number.isNaN(ultima) && (ahora - ultima) > TTL_ESPERANDO_MS) {
+            try {
+                await roomRepository.deleteRoom(r.roomCode || r.id);
+                console.log(`🧹 Sala inactiva eliminada: ${r.roomCode || r.id}`);
+            } catch (e) {
+                console.warn(`⚠️ No se pudo eliminar la sala inactiva ${r.roomCode || r.id}:`, e.message);
+            }
+            continue;
+        }
+
+        // Retornamos solo salas en espera que tengan cupo y NOMBRE
+        const conCupo = (r.jugadores || []).length < (r.maxJugadores || 4);
+        const conNombre = r.nombre && r.nombre.trim() !== '';
+        if (conCupo && conNombre) filtered.push(r);
+    }
 
     console.log(`🔍 [DEBUG] getActiveRooms - Filtradas (activas): ${filtered.length}`);
     return filtered;
@@ -141,6 +188,7 @@ module.exports = {
     updatePlayerConfig,
     getActiveRooms,
     clearRooms,
+    touchRoom,
     getRoom: roomRepository.getRoom,
     updateRoomStatus: async (roomCode, status, results = null) => {
         const updates = { estado: status };

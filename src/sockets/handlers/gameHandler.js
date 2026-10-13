@@ -5,6 +5,20 @@ const { admin } = require('../../config/firebase');
 
 module.exports = (io, socket) => {
 
+    // Si el inicio del juego falla (por ejemplo la IA no generó preguntas válidas)
+    // avisamos a TODOS los jugadores de la sala y les mandamos el estado real de la
+    // sala (que gameService ya devolvió a 'esperando' para poder reintentar).
+    const avisarErrorDeInicio = async (roomCode, mensaje) => {
+        if (!roomCode) return;
+        try {
+            const sala = await roomService.getRoom(roomCode);
+            if (sala) io.to(roomCode).emit('room_updated', sala);
+        } catch (e) {
+            console.warn('⚠️ No se pudo obtener la sala tras el error de inicio:', e.message);
+        }
+        io.to(roomCode).emit('error', { message: mensaje });
+    };
+
     async function enriquecerConFotos(players) {
         if (!players || players.length === 0) return players;
         try {
@@ -128,11 +142,29 @@ module.exports = (io, socket) => {
             if (jugadoresListos === updatedRoom.maxJugadores) {
                 console.log(`🚀 Todos los jugadores están listos. Iniciando juego automáticamente en sala ${roomCode}`);
                 io.to(roomCode).emit('game_loading', { message: 'Generando preguntas con IA...' });
-                const gameData = await gameService.startGame(roomCode);
-                io.to(roomCode).emit('game_started', gameData);
+                try {
+                    const gameData = await gameService.startGame(roomCode);
+                    io.to(roomCode).emit('game_started', gameData);
+                } catch (errorInicio) {
+                    // Si la IA no generó preguntas válidas, la sala ya volvió a
+                    // 'esperando' y avisamos a TODOS (antes solo se enteraba quien
+                    // disparó el update_config y el resto quedaba esperando).
+                    console.error(`❌ No se pudo iniciar el juego en ${roomCode}:`, errorInicio.message);
+                    await avisarErrorDeInicio(roomCode, errorInicio.message);
+                }
             }
         } catch (error) {
             socket.emit('error', { message: error.message });
+        }
+    });
+
+    // HEARTBEAT: mantiene viva la sala mientras alguien está en el lobby
+    socket.on('heartbeat', async (data) => {
+        try {
+            const { roomCode } = data || {};
+            if (roomCode) await roomService.touchRoom(roomCode);
+        } catch (error) {
+            console.warn('⚠️ Error en heartbeat:', error.message);
         }
     });
 
@@ -150,7 +182,7 @@ module.exports = (io, socket) => {
 
         } catch (error) {
             console.error('❌ Error start_game:', error);
-            io.to(data.roomCode).emit('error', { message: 'Error iniciando juego: ' + error.message });
+            await avisarErrorDeInicio(data && data.roomCode, 'Error iniciando juego: ' + error.message);
         }
     });
 
