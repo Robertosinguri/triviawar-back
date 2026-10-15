@@ -19,6 +19,18 @@ const COLECCION = 'mvpp-encuestas';
 const ESTADOS_VALIDOS = ['completada', 'excluida', 'aplazada'];
 
 /**
+ * Zona horaria de referencia del estudio.
+ *
+ * Los "días" del panel se cuentan en hora local, NO en UTC. Si se usara UTC, todo
+ * lo respondido después de las 21:00 (hora argentina, UTC-3) caería en el día
+ * siguiente: el gráfico mostraría una barra fantasma con la fecha de "mañana".
+ *
+ * Es configurable para no atar el código a una región: con ENCUESTA_TZ se cambia
+ * sin tocar el código.
+ */
+const ZONA_HORARIA = process.env.ENCUESTA_TZ || 'America/Argentina/Buenos_Aires';
+
+/**
  * Estado interno, no lo manda nunca el cliente.
  *
  * Marca las respuestas de alguien que ya había respondido antes con la misma
@@ -446,6 +458,46 @@ const aIso = (valor) => {
     return null;
 };
 
+/**
+ * Normaliza un Timestamp de Firestore, un Date o un ISO a un Date; null si no se
+ * puede. A diferencia de aIso, conserva el instante para poder calcular el día en
+ * una zona horaria concreta.
+ */
+const aFecha = (valor) => {
+    if (!valor) return null;
+    if (typeof valor.toDate === 'function') return valor.toDate();
+    if (valor instanceof Date) return valor;
+    if (typeof valor === 'string') {
+        const fecha = new Date(valor);
+        return Number.isNaN(fecha.getTime()) ? null : fecha;
+    }
+    return null;
+};
+
+/**
+ * Formateador de días en la zona de referencia. Se arma una sola vez y se reutiliza.
+ * Se usa formatToParts (y no el patrón de 'en-CA') para no depender de cómo ICU dé
+ * formato a la locale.
+ */
+const FORMATO_DIA = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA_HORARIA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+});
+
+/** Día local (AAAA-MM-DD) de un Timestamp/ISO, en la zona de referencia del estudio. */
+const diaLocal = (valor) => {
+    const fecha = aFecha(valor);
+    if (!fecha) return 'sin-fecha';
+
+    const partes = Object.fromEntries(
+        FORMATO_DIA.formatToParts(fecha).map(({ type, value }) => [type, value])
+    );
+
+    return `${partes.year}-${partes.month}-${partes.day}`;
+};
+
 /** Redondea a una cantidad fija de decimales (para los porcentajes). */
 const redondear = (numero, decimales = 1) => Number(numero.toFixed(decimales));
 
@@ -516,10 +568,11 @@ const obtenerPanelEstadisticas = async () => {
     }
 
     // --- Evolución diaria (para mostrar que la muestra creció en el tiempo)
+    // El día se calcula en la zona de referencia (ver ZONA_HORARIA): agrupar por
+    // UTC corría la serie tres horas y agregaba un día de más al final del día.
     const mapaDias = new Map();
     for (const doc of documentos) {
-        const iso = aIso(doc.creadoEn);
-        const dia = iso ? iso.slice(0, 10) : 'sin-fecha';
+        const dia = diaLocal(doc.creadoEn);
         const acumulado = mapaDias.get(dia) || { fecha: dia, total: 0, completadas: 0 };
         acumulado.total += 1;
         if (doc.estado === 'completada') acumulado.completadas += 1;
@@ -582,6 +635,9 @@ const obtenerPanelEstadisticas = async () => {
 
     return {
         generadoEn: new Date().toISOString(),
+        // Zona con la que se armaron los días del panel: el front la usa para
+        // mostrar las horas con el mismo criterio (y no con el del navegador).
+        zonaHoraria: ZONA_HORARIA,
         versionCuestionario: VERSION_CUESTIONARIO,
         versiones,
         total,
@@ -620,6 +676,7 @@ const obtenerPanelEstadisticas = async () => {
 module.exports = {
     COLECCION,
     ESTADOS_VALIDOS,
+    ZONA_HORARIA,
     SEGUNDOS_MINIMOS,
     VERSION_CUESTIONARIO,
     MAX_DOCUMENTOS_PANEL,
